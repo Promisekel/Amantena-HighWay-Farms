@@ -32,13 +32,15 @@ import {
 
 // Firebase configuration
 const firebaseConfig = {
-  apiKey: "AIzaSyDyhvPaL426IUumDGCszSN9CAEGoZvrt8o",
-  authDomain: "amantena-highway-farms.firebaseapp.com",
-  projectId: "amantena-highway-farms",
-  storageBucket: "amantena-highway-farms.firebasestorage.app",
-  messagingSenderId: "771391681909",
-  appId: "1:771391681909:web:7d33589f58d7fa908a8f3c",
-  measurementId: "G-KLXBYEPVJY"
+  apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
+  authDomain: process.env.REACT_APP_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.REACT_APP_FIREBASE_PROJECT_ID,
+  storageBucket:
+    process.env.REACT_APP_FIREBASE_STORAGE_BUCKET ||
+    `${process.env.REACT_APP_FIREBASE_PROJECT_ID}.appspot.com`,
+  messagingSenderId: process.env.REACT_APP_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.REACT_APP_FIREBASE_APP_ID,
+  measurementId: process.env.REACT_APP_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase
