@@ -77,3 +77,16 @@ firebase emulators:start --only functions
 - **No email sent?** Ensure Cloud Functions are deployed and SMTP credentials are set with `firebase functions:config:set`.
 - **Permission errors?** Confirm the logged-in user is listed in `settings/app-settings.authorizedEmails`.
 - **Toast not showing?** Check the browser console for errors when submitting the support form.
+
+## Deploying to Vercel
+
+The repository root contains `vercel.json` so Vercel builds from the `amantena-farms/` subdirectory without extra configuration.
+
+1. Push changes to GitHub and import the repo in Vercel.
+2. On first deploy, Vercel reads `vercel.json` and runs:
+	- `npm install` inside `amantena-farms/`
+	- `npm run build` inside `amantena-farms/`
+3. Add the required environment variables (same keys as `.env.example`). In Vercel → Project Settings → Environment Variables, use the names referenced in `vercel.json` (e.g. `REACT_APP_FIREBASE_API_KEY`, `REACT_APP_CLOUDINARY_CLOUD_NAME`).
+4. Redeploy to produce the static build served from `amantena-farms/build`.
+
+> Tip: use Vercel secrets (e.g. `vercel env add`) to store sensitive values, then map them in `vercel.json` via the `@secret-name` syntax already provided.
