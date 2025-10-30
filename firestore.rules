@@ -1,0 +1,86 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users collection - only authenticated users can read/write their own data
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Products collection - authenticated users can read/write
+    match /products/{productId} {
+      allow read, write: if request.auth != null;
+      
+      // Validate product data structure
+      allow create: if request.auth != null 
+        && validateProductData(resource.data);
+      
+      allow update: if request.auth != null 
+        && validateProductData(resource.data);
+    }
+    
+    // Sales collection - authenticated users can read/write
+    match /sales/{saleId} {
+      allow read, write: if request.auth != null;
+      
+      // Validate sale data structure
+      allow create: if request.auth != null 
+        && validateSaleData(resource.data);
+    }
+    
+    // Stock movements collection - authenticated users can read/write with validation
+    match /stockMovements/{movementId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null 
+        && validateStockMovementData(resource.data);
+      allow update: if request.auth != null 
+        && validateStockMovementData(resource.data);
+    }
+    
+    // Settings collection - only admin users can access
+    match /settings/{settingId} {
+      allow read, write: if request.auth != null 
+        && isAdmin(request.auth.uid);
+    }
+    
+    // Helper functions
+    function validateProductData(data) {
+      return data.keys().hasAll(['name', 'category', 'currentStock', 'minStock', 'price', 'unit'])
+        && data.name is string
+        && data.category is string
+        && data.currentStock is number
+        && data.minStock is number
+        && data.price is number
+        && data.unit is string
+        && data.currentStock >= 0
+        && data.minStock >= 0
+        && data.price >= 0;
+    }
+    
+    function validateSaleData(data) {
+      return data.keys().hasAll(['productId', 'productName', 'quantity', 'unitPrice', 'totalAmount', 'customerName'])
+        && data.productId is string
+        && data.productName is string
+        && data.quantity is number
+        && data.unitPrice is number
+        && data.totalAmount is number
+        && data.customerName is string
+        && data.quantity > 0
+        && data.unitPrice >= 0
+        && data.totalAmount >= 0;
+    }
+
+    function validateStockMovementData(data) {
+      return data.keys().hasAll(['productId', 'quantity', 'type', 'reason', 'timestamp'])
+        && data.productId is string
+        && data.quantity is number
+        && data.type in ['in', 'out']
+        && data.reason is string
+        && data.timestamp is timestamp
+        && data.quantity != 0;
+    }
+    
+    function isAdmin(userId) {
+      return get(/databases/$(database)/documents/users/$(userId)).data.role == 'admin';
+    }
+  }
+}

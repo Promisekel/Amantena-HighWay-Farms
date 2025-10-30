@@ -1,70 +1,79 @@
-# Getting Started with Create React App
+# Amantena Highway Farms Dashboard
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+Modern React dashboard for managing inventory, sales, analytics, and notifications for Amantena Highway Farms. The project now includes Firebase Cloud Functions to power support-request emails.
 
-## Available Scripts
+## Prerequisites
 
-In the project directory, you can run:
+- Node.js 18+
+- Firebase CLI (`npm install -g firebase-tools`)
+- A Firebase project with Firestore and Authentication enabled
 
-### `npm start`
+## Frontend Setup
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+```bash
+cd amantena-farms
+npm install
+npm start
+```
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+Environment variables live in `.env`; see `.env.example` for the required keys.
 
-### `npm test`
+## Cloud Functions (Support Email Service)
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+The new `functions/` directory contains a callable Cloud Function named `sendEmailNotification` that sends support messages to `classiqcode@gmail.com` using SMTP credentials stored in Firebase config.
 
-### `npm run build`
+### 1. Install dependencies
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+```bash
+cd functions
+npm install
+```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+### 2. Configure SMTP credentials
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+```bash
+firebase functions:config:set \
+	email.user="your-smtp-username" \
+	email.pass="your-smtp-password" \
+	email.from="Highway Farm Support <support@yourdomain.com>"
+```
 
-### `npm run eject`
+Optional overrides:
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+- `email.host` (defaults to `smtp.gmail.com`)
+- `email.port` (defaults to `465`)
+- `email.secure` (defaults to `true`)
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+### 3. Deploy the function
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+```bash
+firebase deploy --only functions
+```
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+Or run locally:
 
-## Learn More
+```bash
+firebase emulators:start --only functions
+```
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## Support Request Flow
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+- Users open the sidebar “Get Support” modal.
+- Submitting the form calls `sendSupportRequestEmail` in `src/services/emailNotifications.js`.
+- The callable Cloud Function sends the email to `classiqcode@gmail.com` and logs the request in Firestore (`support-requests`).
+- Toast notifications provide live feedback for success or failure.
 
-### Code Splitting
+## Scripts
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+| Command | Location | Description |
+| --- | --- | --- |
+| `npm start` | `amantena-farms/` | Run the React dev server |
+| `npm run build` | `amantena-farms/` | Production build |
+| `npm test` | `amantena-farms/` | React testing library |
+| `npm run deploy` | `functions/` | Deploy Cloud Functions |
 
-### Analyzing the Bundle Size
+## Troubleshooting
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+- **No email sent?** Ensure Cloud Functions are deployed and SMTP credentials are set with `firebase functions:config:set`.
+- **Permission errors?** Confirm the logged-in user is listed in `settings/app-settings.authorizedEmails`.
+- **Toast not showing?** Check the browser console for errors when submitting the support form.

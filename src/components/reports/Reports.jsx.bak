@@ -1,0 +1,597 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  FileText, 
+  Package, 
+  Users, 
+  DollarSign, 
+  Calendar, 
+  Download,
+  Eye,
+  Filter,
+  RefreshCw,
+  AlertTriangle,
+  BarChart3,
+  PieChart,
+  LineChart
+} from 'lucide-react';
+import { 
+  collection, 
+  query, 
+  orderBy, 
+  limit, 
+  getDocs, 
+  where, 
+  onSnapshot,
+  Timestamp 
+} from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { format, subDays, startOfDay, endOfDay } from 'date-fns';
+import toast from 'react-hot-toast';
+
+const Reports = () => {
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [dateRange, setDateRange] = useState('7days');
+  const [reportType, setReportType] = useState('overview');
+  
+  // Data states
+  const [salesData, setSalesData] = useState([]);
+  const [productsData, setProductsData] = useState([]);
+  const [analytics, setAnalytics] = useState({
+    totalSales: 0,
+    totalRevenue: 0,
+    totalCustomers: 0,
+    avgOrderValue: 0,
+    topProducts: [],
+    recentSales: [],
+    salesTrend: 0,
+    revenueTrend: 0
+  });
+
+  // Fetch all data on component mount and set up real-time listeners
+  useEffect(() => {
+    initializeData();
+    setupRealTimeListeners();
+  }, [dateRange]);
+
+  const initializeData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchSalesData(),
+        fetchProductsData(),
+        calculateAnalytics()
+      ]);
+    } catch (error) {
+      console.error('Error initializing reports data:', error);
+      toast.error('Failed to load reports data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const setupRealTimeListeners = () => {
+    // Real-time sales listener
+    const salesQuery = query(
+      collection(db, 'sales'),
+      orderBy('timestamp', 'desc'),
+      limit(100)
+    );
+
+    const salesUnsubscribe = onSnapshot(salesQuery, (snapshot) => {
+      const sales = [];
+      snapshot.forEach(doc => {
+        sales.push({ id: doc.id, ...doc.data() });
+      });
+      setSalesData(sales);
+      calculateAnalytics(sales);
+    });
+
+    // Real-time products listener
+    const productsQuery = query(collection(db, 'products'));
+    const productsUnsubscribe = onSnapshot(productsQuery, (snapshot) => {
+      const products = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        // Normalize stock data exactly like the inventory page
+        const stockQuantity = data.stockQuantity !== undefined ? data.stockQuantity : (data.currentStock || 0);
+        
+        // Include products that don't have a status field OR are not archived
+        if (!data.status || data.status !== 'archived') {
+          products.push({ id: doc.id, ...data });
+        }
+      });
+      setProductsData(products);
+    });
+
+    return () => {
+      salesUnsubscribe();
+      productsUnsubscribe();
+    };
+  };
+
+  const fetchSalesData = async () => {
+    try {
+      const salesRef = collection(db, 'sales');
+      let salesQuery = query(salesRef, orderBy('timestamp', 'desc'), limit(100));
+      
+      if (dateRange !== 'all') {
+        const daysBack = parseInt(dateRange.replace('days', ''));
+        const startDate = startOfDay(subDays(new Date(), daysBack));
+        salesQuery = query(
+          salesRef,
+          where('timestamp', '>=', Timestamp.fromDate(startDate)),
+          orderBy('timestamp', 'desc')
+        );
+      }
+
+      const snapshot = await getDocs(salesQuery);
+      const sales = [];
+      snapshot.forEach(doc => {
+        sales.push({ id: doc.id, ...doc.data() });
+      });
+      
+      setSalesData(sales);
+      return sales;
+    } catch (error) {
+      console.error('Error fetching sales data:', error);
+      return [];
+    }
+  };
+
+  const fetchProductsData = async () => {
+    try {
+      const productsRef = collection(db, 'products');
+      const snapshot = await getDocs(productsRef);
+      const products = [];
+      snapshot.forEach(doc => {
+        const data = doc.data();
+        // Include products that don't have a status field OR are not archived
+        if (!data.status || data.status !== 'archived') {
+          products.push({ id: doc.id, ...data });
+        }
+      });
+      
+      setProductsData(products);
+      return products;
+    } catch (error) {
+      console.error('Error fetching products data:', error);
+      return [];
+    }
+  };
+
+  const calculateAnalytics = (sales = salesData, products = productsData) => {
+    // Calculate sales metrics
+    const totalSales = sales.length;
+    const totalRevenue = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+    const avgOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0;
+    
+    // Calculate unique customers
+    const uniqueCustomers = new Set(sales.map(sale => sale.customer)).size;
+    
+    // Filter active products (no status or not archived)
+    const activeProducts = products.filter(product => 
+      !product.status || product.status !== 'archived'
+    );
+    
+    // Calculate low stock items - EXACT same logic as inventory page
+    const stats = products.reduce((acc, product) => {
+      // Only process valid products with type, name, and numeric stockQuantity
+      if (product?.type && product?.name && typeof product.stockQuantity === 'number') {
+        // Check for low stock using EXACT same logic as inventory page
+        const stockQuantity = parseInt(product.stockQuantity) || 0;
+        const minStock = parseInt(product.minStock) || 0;
+        
+        // LOW STOCK: stockQuantity <= minStock
+        if (stockQuantity <= minStock) {
+          acc.lowStockCount++;
+        }
+      }
+      return acc;
+    }, {
+      lowStockCount: 0
+    });
+
+    const lowStockItems = stats.lowStockCount;
+
+    // Calculate top products by revenue
+    const productSales = {};
+    sales.forEach(sale => {
+      if (productSales[sale.productName]) {
+        productSales[sale.productName] += sale.total || 0;
+      } else {
+        productSales[sale.productName] = sale.total || 0;
+      }
+    });
+
+    const topProducts = Object.entries(productSales)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 5)
+      .map(([name, revenue]) => ({ name, revenue }));
+
+    // Calculate trends (compare with previous period)
+    const currentPeriodStart = subDays(new Date(), parseInt(dateRange.replace('days', '') || '7'));
+    const previousPeriodStart = subDays(currentPeriodStart, parseInt(dateRange.replace('days', '') || '7'));
+    
+    const currentPeriodSales = sales.filter(sale => 
+      sale.timestamp?.toDate() >= currentPeriodStart
+    );
+    const previousPeriodSales = sales.filter(sale => {
+      const saleDate = sale.timestamp?.toDate();
+      return saleDate >= previousPeriodStart && saleDate < currentPeriodStart;
+    });
+
+    const currentRevenue = currentPeriodSales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+    const previousRevenue = previousPeriodSales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+    
+    const salesTrend = previousPeriodSales.length > 0 
+      ? ((currentPeriodSales.length - previousPeriodSales.length) / previousPeriodSales.length) * 100 
+      : 0;
+    const revenueTrend = previousRevenue > 0 
+      ? ((currentRevenue - previousRevenue) / previousRevenue) * 100 
+      : 0;
+
+    setAnalytics({
+      totalSales,
+      totalRevenue,
+      lowStockItems,
+      totalCustomers: uniqueCustomers,
+      avgOrderValue,
+      topProducts,
+      recentSales: sales.slice(0, 10),
+      salesTrend,
+      revenueTrend
+    });
+  };
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await initializeData();
+    setRefreshing(false);
+    toast.success('Reports refreshed successfully');
+  };
+
+  const exportReport = (type) => {
+    // Simple CSV export
+    let csvContent = "";
+    let filename = "";
+
+    switch (type) {
+      case 'sales':
+        csvContent = "Date,Product,Customer,Quantity,Price,Total\n";
+        salesData.forEach(sale => {
+          csvContent += `${format(sale.timestamp?.toDate() || new Date(), 'yyyy-MM-dd')},${sale.productName},${sale.customer},${sale.quantity},${sale.price},${sale.total}\n`;
+        });
+        filename = `sales_report_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+        break;
+      case 'inventory':
+        csvContent = "Product,Type,Current Stock,Min Stock,Max Stock,Price,Value\n";
+        productsData.forEach(product => {
+          const value = (product.stockQuantity || 0) * (product.price || 0);
+          csvContent += `${product.name},${product.type},${product.stockQuantity || 0},${product.minStock || 0},${product.maxStock || 0},${product.price || 0},${value}\n`;
+        });
+        filename = `inventory_report_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+        break;
+      default:
+        return;
+    }
+
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    link.setAttribute("download", filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    toast.success(`${type} report exported successfully`);
+  };
+
+  const formatCurrency = (amount) => {
+    return `GH₵${Number(amount || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}`;
+  };
+
+  const getTrendColor = (trend) => {
+    if (trend > 0) return 'text-green-600';
+    if (trend < 0) return 'text-red-600';
+    return 'text-gray-600';
+  };
+
+  const getTrendIcon = (trend) => {
+    if (trend > 0) return <TrendingUp className="w-4 h-4" />;
+    if (trend < 0) return <TrendingDown className="w-4 h-4" />;
+    return <div className="w-4 h-4" />;
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="flex flex-col items-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-emerald-600 mb-4"></div>
+          <p className="text-gray-600">Loading analytics...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Reports & Analytics</h1>
+          <p className="text-gray-600">Comprehensive business insights and performance metrics</p>
+        </div>
+        
+        <div className="flex items-center space-x-4 mt-4 md:mt-0">
+          {/* Date Range Filter */}
+          <select
+            value={dateRange}
+            onChange={(e) => setDateRange(e.target.value)}
+            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 bg-white"
+          >
+            <option value="7days">Last 7 Days</option>
+            <option value="30days">Last 30 Days</option>
+            <option value="90days">Last 90 Days</option>
+            <option value="all">All Time</option>
+          </select>
+
+          {/* Refresh Button */}
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors flex items-center space-x-2 disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            <span>Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Key Metrics Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        {/* Total Revenue */}
+        <div className="bg-gradient-to-br from-emerald-500 to-teal-600 rounded-xl shadow-lg p-6 hover:shadow-xl transition-all duration-300 transform hover:scale-[1.02]">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-emerald-100">Total Revenue</p>
+              <p className="text-3xl font-bold text-white mt-2">{formatCurrency(analytics.totalRevenue)}</p>
+              <div className="flex items-center space-x-2 mt-3 bg-white bg-opacity-10 rounded-lg px-3 py-1">
+                {getTrendIcon(analytics.revenueTrend)}
+                <span className="text-sm font-medium text-emerald-100">
+                  {Math.abs(analytics.revenueTrend).toFixed(1)}% from last period
+                </span>
+              </div>
+            </div>
+            <div className="p-4 bg-white bg-opacity-20 rounded-full animate-pulse">
+              <DollarSign className="w-8 h-8 text-white" />
+            </div>
+          </div>
+        </div>
+
+        {/* Total Sales */}
+        <div className="bg-gradient-to-br from-blue-500 to-indigo-600 rounded-xl shadow-lg p-6 hover:shadow-xl transition-all duration-300 transform hover:scale-[1.02]">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-blue-100">Total Sales</p>
+              <p className="text-3xl font-bold text-white mt-2">{analytics.totalSales}</p>
+              <div className="flex items-center space-x-2 mt-3 bg-white bg-opacity-10 rounded-lg px-3 py-1">
+                {getTrendIcon(analytics.salesTrend)}
+                <span className="text-sm font-medium text-blue-100">
+                  {Math.abs(analytics.salesTrend).toFixed(1)}% from last period
+                </span>
+              </div>
+            </div>
+            <div className="p-4 bg-white bg-opacity-20 rounded-full animate-pulse">
+              <BarChart3 className="w-8 h-8 text-white" />
+            </div>
+          </div>
+        </div>
+
+        {/* Low Stock Alerts */}
+        <div className={`bg-gradient-to-br ${analytics.lowStockItems > 0 ? 'from-rose-500 to-red-600' : 'from-green-500 to-emerald-600'} rounded-xl shadow-lg p-6 hover:shadow-xl transition-all duration-300 transform hover:scale-[1.02]`}>
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium text-rose-100">Low Stock Items</p>
+              <p className="text-3xl font-bold text-white mt-2">{analytics.lowStockItems}</p>
+              <div className="flex items-center space-x-2 mt-3 bg-white bg-opacity-10 rounded-lg px-3 py-1">
+                <AlertTriangle className="w-4 h-4 text-white" />
+                <p className="text-sm text-white">
+                  {analytics.lowStockItems > 0 ? 'Needs attention' : 'All good'}
+                </p>
+              </div>
+            </div>
+            <div className="p-4 bg-white bg-opacity-20 rounded-full animate-pulse">
+              <AlertTriangle className="w-8 h-8 text-white" />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Charts and Analytics */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+        {/* Top Products */}
+        <div className="bg-gradient-to-br from-purple-500 to-indigo-600 rounded-xl shadow-lg p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-semibold text-white">Top Products by Revenue</h3>
+            <div className="p-2 bg-white bg-opacity-20 rounded-lg">
+              <PieChart className="w-5 h-5 text-purple-100" />
+            </div>
+          </div>
+          
+          <div className="space-y-4">
+            {analytics.topProducts.length > 0 ? (
+              analytics.topProducts.map((product, index) => (
+                <div key={index} className="flex items-center justify-between p-4 bg-white bg-opacity-10 backdrop-blur-lg rounded-lg hover:bg-opacity-20 transition-colors">
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white text-sm font-bold
+                      ${index === 0 ? 'bg-yellow-400' : index === 1 ? 'bg-blue-400' : index === 2 ? 'bg-green-400' : 'bg-pink-400'}`}>
+                      {index + 1}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-white">{product.name}</p>
+                      <p className="text-sm text-purple-200">Product</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-white">{formatCurrency(product.revenue)}</p>
+                    <p className="text-sm text-purple-200">Revenue</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8 text-purple-200">
+                <Package className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                <p>No sales data available</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Recent Sales */}
+        <div className="bg-gradient-to-br from-blue-500 to-cyan-600 rounded-xl shadow-lg p-6">
+          <div className="flex items-center justify-between mb-6">
+            <h3 className="text-xl font-semibold text-white">Recent Sales</h3>
+            <div className="p-2 bg-white bg-opacity-20 rounded-lg">
+              <LineChart className="w-5 h-5 text-blue-100" />
+            </div>
+          </div>
+          
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {analytics.recentSales.length > 0 ? (
+              analytics.recentSales.map((sale, index) => (
+                <div key={sale.id || index} className="flex items-center justify-between p-3 bg-white bg-opacity-10 backdrop-blur-lg rounded-lg hover:bg-opacity-20 transition-colors">
+                  <div>
+                    <p className="font-medium text-white">{sale.productName}</p>
+                    <p className="text-sm text-blue-100">
+                      {sale.customer} • Qty: {sale.quantity}
+                    </p>
+                    <p className="text-xs text-blue-200">
+                      {sale.timestamp ? format(sale.timestamp.toDate(), 'MMM dd, yyyy') : 'N/A'}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-semibold text-white">{formatCurrency(sale.total)}</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-8 text-blue-200">
+                <FileText className="w-12 h-12 mx-auto mb-2 opacity-50" />
+                <p>No recent sales</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Report Actions */}
+      <div className="bg-gradient-to-br from-slate-700 to-slate-800 rounded-xl shadow-lg p-6">
+        <h3 className="text-xl font-semibold text-white mb-6">Export Reports</h3>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* Daily Sales Report */}
+          <button 
+            onClick={() => exportReport('sales')}
+            className="group p-6 bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl hover:shadow-lg transition-all duration-200 text-left transform hover:scale-[1.02]"
+          >
+            <div className="w-12 h-12 bg-white bg-opacity-20 rounded-xl flex items-center justify-center mb-4 transition-colors group-hover:bg-opacity-30">
+              <FileText className="h-6 w-6 text-white" />
+            </div>
+            <h4 className="font-semibold text-white mb-2">Sales Report</h4>
+            <p className="text-blue-100 text-sm mb-4">Export detailed sales data with customer information</p>
+            <div className="flex items-center space-x-2 text-white">
+              <Download className="w-4 h-4" />
+              <span className="text-sm font-medium">Export CSV</span>
+            </div>
+          </button>
+
+          {/* Inventory Report */}
+          <button 
+            onClick={() => exportReport('inventory')}
+            className="group p-6 bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl hover:shadow-lg transition-all duration-200 text-left transform hover:scale-[1.02]"
+          >
+            <div className="w-12 h-12 bg-white bg-opacity-20 rounded-xl flex items-center justify-center mb-4 transition-colors group-hover:bg-opacity-30">
+              <Package className="h-6 w-6 text-white" />
+            </div>
+            <h4 className="font-semibold text-white mb-2">Inventory Report</h4>
+            <p className="text-emerald-100 text-sm mb-4">Current stock levels, valuations and low stock alerts</p>
+            <div className="flex items-center space-x-2 text-white">
+              <Download className="w-4 h-4" />
+              <span className="text-sm font-medium">Export CSV</span>
+            </div>
+          </button>
+
+          {/* Customer Analytics */}
+          <div className="group p-6 bg-gradient-to-br from-gray-600 to-gray-700 rounded-xl text-left opacity-90">
+            <div className="w-12 h-12 bg-white bg-opacity-10 rounded-xl flex items-center justify-center mb-4">
+              <Users className="h-6 w-6 text-gray-300" />
+            </div>
+            <h4 className="font-semibold text-gray-200 mb-2">Customer Analytics</h4>
+            <p className="text-gray-400 text-sm mb-4">Customer insights and purchase patterns</p>
+            <div className="flex items-center space-x-2 text-gray-300">
+              <Eye className="w-4 h-4" />
+              <span className="text-sm">Coming Soon</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Additional Metrics */}
+      <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Performance Metrics */}
+        <div className="bg-gradient-to-br from-violet-500 to-purple-600 rounded-xl shadow-lg p-6">
+          <h4 className="text-xl font-semibold text-white mb-6">Performance Metrics</h4>
+          <div className="space-y-6">
+            <div className="flex justify-between items-center bg-white bg-opacity-10 rounded-lg p-4">
+              <span className="text-purple-100">Average Order Value</span>
+              <span className="font-semibold text-white">{formatCurrency(analytics.avgOrderValue)}</span>
+            </div>
+            <div className="flex justify-between items-center bg-white bg-opacity-10 rounded-lg p-4">
+              <span className="text-purple-100">Total Customers</span>
+              <span className="font-semibold text-white">{analytics.totalCustomers}</span>
+            </div>
+            <div className="flex justify-between items-center bg-white bg-opacity-10 rounded-lg p-4">
+              <span className="text-purple-100">Inventory Turnover</span>
+              <span className="font-semibold text-purple-200">Coming Soon</span>
+            </div>
+          </div>
+        </div>
+
+        {/* System Status */}
+        <div className="bg-gradient-to-br from-gray-800 to-slate-900 rounded-xl shadow-lg p-6">
+          <h4 className="text-xl font-semibold text-white mb-6">System Status</h4>
+          <div className="space-y-6">
+            <div className="flex items-center justify-between bg-white bg-opacity-10 rounded-lg p-4">
+              <span className="text-gray-300">Data Status</span>
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <span className="text-sm font-medium text-green-400">Live</span>
+              </div>
+            </div>
+            <div className="flex items-center justify-between bg-white bg-opacity-10 rounded-lg p-4">
+              <span className="text-gray-300">Last Updated</span>
+              <span className="text-sm text-gray-400">{format(new Date(), 'MMM dd, yyyy HH:mm')}</span>
+            </div>
+            <div className="flex items-center justify-between bg-white bg-opacity-10 rounded-lg p-4">
+              <span className="text-gray-300">Database</span>
+              <div className="flex items-center space-x-2">
+                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                <span className="text-sm font-medium text-green-400">Connected</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Reports;

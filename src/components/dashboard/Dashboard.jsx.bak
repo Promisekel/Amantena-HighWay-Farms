@@ -1,0 +1,517 @@
+import React, { useState, useEffect } from 'react';
+import { 
+  TrendingUp, 
+  TrendingDown, 
+  Package, 
+  AlertTriangle, 
+  ShoppingCart, 
+  DollarSign,
+  Users,
+  Star,
+  Calendar,
+  Clock,
+  ArrowUpRight,
+  ArrowDownRight,
+  RefreshCw,
+  Eye,
+  Plus,
+  Bell,
+  Activity,
+  Target,
+  Zap
+} from 'lucide-react';
+import { 
+  collection, 
+  query, 
+  orderBy, 
+  limit, 
+  onSnapshot,
+  where,
+  Timestamp
+} from 'firebase/firestore';
+import { db } from '../../services/firebase';
+import { format, isToday, subDays, startOfDay } from 'date-fns';
+import toast from 'react-hot-toast';
+
+const Dashboard = () => {
+  const [loading, setLoading] = useState(true);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [salesData, setSalesData] = useState([]);
+  const [productsData, setProductsData] = useState([]);
+  const [dashboardStats, setDashboardStats] = useState({
+    totalProducts: 0,
+    todaySales: 0,
+    totalRevenue: 0,
+    inventoryValue: 0,
+    uniqueCustomers: 0,
+    averageOrderValue: 0,
+    salesTrend: 0,
+    revenueTrend: 0,
+    recentSales: [],
+    topProducts: []
+  });
+
+  // Update current time every minute
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Removed quick action handlers
+
+  // Set up real-time data listeners
+  useEffect(() => {
+    const setupListeners = () => {
+      // Products listener
+      const productsQuery = query(collection(db, 'products'));
+      const productsUnsubscribe = onSnapshot(productsQuery, (snapshot) => {
+        const products = [];
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          // Normalize stock data exactly like the inventory page
+          const stockQuantity = data.stockQuantity !== undefined ? data.stockQuantity : (data.currentStock || 0);
+          
+          // Only include active products and normalize data
+          if (data.status !== 'archived') {
+            products.push({
+              id: doc.id,
+              ...data,
+              stockQuantity,
+              currentStock: stockQuantity, // Keep both for compatibility
+              maxStock: data.maxStock || 100,
+              minStock: data.minStock || 10,
+              lastUpdated: data.lastUpdated?.toDate() || data.createdAt?.toDate() || new Date(),
+              createdAt: data.createdAt?.toDate() || new Date()
+            });
+          }
+        });
+        setProductsData(products);
+        calculateStats(salesData, products);
+      });
+
+      // Sales listener - last 30 days for trend analysis
+      const thirtyDaysAgo = startOfDay(subDays(new Date(), 30));
+      const salesQuery = query(
+        collection(db, 'sales'),
+        where('timestamp', '>=', Timestamp.fromDate(thirtyDaysAgo)),
+        orderBy('timestamp', 'desc'),
+        limit(100)
+      );
+      
+      const salesUnsubscribe = onSnapshot(salesQuery, (snapshot) => {
+        const sales = [];
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          sales.push({ 
+            id: doc.id, 
+            ...data,
+            timestamp: data.timestamp?.toDate() || new Date()
+          });
+        });
+        setSalesData(sales);
+        calculateStats(sales, productsData);
+        setLoading(false);
+      });
+
+      return () => {
+        productsUnsubscribe();
+        salesUnsubscribe();
+      };
+    };
+
+    return setupListeners();
+  }, []);
+
+  const calculateStats = (sales, products) => {
+    // Today's sales
+    const todaySales = sales.filter(sale => isToday(sale.timestamp));
+    const yesterdaySales = sales.filter(sale => {
+      const yesterday = subDays(new Date(), 1);
+      return format(sale.timestamp, 'yyyy-MM-dd') === format(yesterday, 'yyyy-MM-dd');
+    });
+
+    // Revenue calculations
+    const todayRevenue = todaySales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+    const yesterdayRevenue = yesterdaySales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+    
+    // Trends
+    const salesTrend = yesterdaySales.length > 0 
+      ? ((todaySales.length - yesterdaySales.length) / yesterdaySales.length) * 100 
+      : todaySales.length > 0 ? 100 : 0;
+    
+    const revenueTrend = yesterdayRevenue > 0 
+      ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue) * 100 
+      : todayRevenue > 0 ? 100 : 0;
+
+    // Product calculations - Using the same approach as inventory page
+    const stats = products.reduce((acc, product) => {
+      // Only process valid products
+      if (product?.type && product?.name && typeof product.stockQuantity === 'number') {
+        // Check for low stock using EXACT same logic as inventory page
+        const stockQuantity = parseInt(product.stockQuantity) || 0;
+        const minStock = parseInt(product.minStock) || 0;
+        
+        // LOW STOCK: stockQuantity <= minStock
+        if (stockQuantity <= minStock) {
+          acc.lowStockProducts.push(product);
+        }
+
+        // Calculate inventory value with proper number parsing
+        const price = parseFloat(product.price) || 0;
+        acc.totalValue += (price * stockQuantity);
+      }
+      return acc;
+    }, {
+      lowStockProducts: [],
+      totalValue: 0
+    });
+
+    const lowStockProducts = stats.lowStockProducts;
+    const inventoryValue = stats.totalValue;
+
+    // Unique customers
+    const uniqueCustomers = new Set(sales.map(sale => sale.customer)).size;
+
+    // Average order value
+    const totalRevenue = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+    const averageOrderValue = sales.length > 0 ? totalRevenue / sales.length : 0;
+
+    // Top products by revenue
+    const productRevenue = {};
+    sales.forEach(sale => {
+      if (productRevenue[sale.productName]) {
+        productRevenue[sale.productName] += sale.total || 0;
+      } else {
+        productRevenue[sale.productName] = sale.total || 0;
+      }
+    });
+
+    const topProducts = Object.entries(productRevenue)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 3)
+      .map(([name, revenue]) => ({ name, revenue }));
+
+    setDashboardStats({
+      totalProducts: products.length,
+      lowStockItems: lowStockProducts.length,
+      todaySales: todaySales.length,
+      totalRevenue: todayRevenue,
+      inventoryValue,
+      uniqueCustomers,
+      averageOrderValue,
+      salesTrend,
+      revenueTrend,
+      recentSales: sales.slice(0, 5),
+      lowStockProducts: lowStockProducts.slice(0, 5),
+      topProducts
+    });
+  };
+
+  const formatCurrency = (amount) => {
+    return `GH₵${Number(amount || 0).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    })}`;
+  };
+
+  const StatsCard = ({ title, value, icon: Icon, gradient, trend, onClick, description }) => {
+    const isPositive = trend >= 0;
+    
+    return (
+      <div 
+        onClick={onClick}
+        className={`group relative bg-white rounded-2xl p-6 shadow-sm border border-gray-200 hover:shadow-xl hover:border-emerald-300 transition-all duration-300 transform hover:-translate-y-1 ${onClick ? 'cursor-pointer' : ''}`}
+      >
+        {/* Background gradient overlay on hover */}
+        <div className={`absolute inset-0 ${gradient} opacity-0 group-hover:opacity-5 rounded-2xl transition-opacity duration-300`} />
+        
+        <div className="relative z-10">
+          <div className="flex items-center justify-between mb-4">
+            <div className={`w-14 h-14 rounded-2xl ${gradient} flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform duration-300`}>
+              <Icon className="h-7 w-7 text-white" />
+            </div>
+            {trend !== undefined && (
+              <div className={`flex items-center space-x-2 px-3 py-1 rounded-full ${
+                isPositive ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+              }`}>
+                {isPositive ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
+                <span className="text-sm font-semibold">{Math.abs(trend).toFixed(1)}%</span>
+              </div>
+            )}
+          </div>
+          
+          <h3 className="text-3xl font-bold text-gray-900 mb-2 group-hover:text-emerald-700 transition-colors">
+            {value}
+          </h3>
+          <p className="text-gray-600 font-medium text-sm">{title}</p>
+          {description && (
+            <p className="text-gray-500 text-xs mt-1">{description}</p>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // QuickActionCard component removed
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-blue-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="relative">
+            <div className="w-20 h-20 border-4 border-emerald-200 rounded-full animate-spin border-t-emerald-600 mx-auto mb-4"></div>
+            <div className="absolute inset-0 w-20 h-20 border-4 border-blue-200 rounded-full animate-ping mx-auto opacity-20"></div>
+          </div>
+          <p className="text-gray-600 font-medium">Loading your dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-emerald-50 p-6">
+      {/* Welcome Header */}
+      <div className="mb-8 text-center md:text-left">
+        <div className="flex flex-col md:flex-row items-center justify-between">
+          <div>
+            <h1 className="text-4xl font-bold bg-gradient-to-r from-emerald-600 to-blue-600 bg-clip-text text-transparent mb-2">
+              Welcome Back! 👋
+            </h1>
+            <p className="text-gray-600 text-lg">Here's what's happening with Amantena Highway Farms today</p>
+            <div className="flex items-center space-x-4 mt-2 text-sm text-gray-500">
+              <div className="flex items-center space-x-1">
+                <Calendar size={16} />
+                <span>{format(currentTime, 'EEEE, MMMM dd, yyyy')}</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <Clock size={16} />
+                <span>{format(currentTime, 'HH:mm')}</span>
+              </div>
+              <div className="flex items-center space-x-1">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span>Live Data</span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="mt-4 md:mt-0">
+            <button
+              onClick={() => window.location.reload()}
+              className="flex items-center space-x-2 px-6 py-3 bg-white rounded-xl shadow-sm hover:shadow-md border border-gray-200 hover:border-emerald-300 transition-all duration-200 text-gray-700 hover:text-emerald-600"
+            >
+              <RefreshCw size={18} />
+              <span className="font-medium">Refresh</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Key Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <StatsCard
+          title="Total Products"
+          value={productsData.length}
+          description="Active inventory items"
+          icon={Package}
+          gradient="bg-gradient-to-r from-blue-500 to-blue-600"
+          trend={5}
+        />
+        
+        <StatsCard
+          title="Today's Sales"
+          value={dashboardStats.todaySales}
+          description="Transactions completed"
+          icon={ShoppingCart}
+          gradient="bg-gradient-to-r from-emerald-500 to-emerald-600"
+          trend={dashboardStats.salesTrend}
+        />
+        
+        <StatsCard
+          title="Today's Revenue"
+          value={formatCurrency(dashboardStats.totalRevenue)}
+          description="Sales income today"
+          icon={DollarSign}
+          gradient="bg-gradient-to-r from-purple-500 to-purple-600"
+          trend={dashboardStats.revenueTrend}
+        />
+        
+        <StatsCard
+          title="Low Stock Items"
+          value={dashboardStats.lowStockItems}
+          description={dashboardStats.lowStockItems > 0 ? "Need attention" : "All good"}
+          icon={AlertTriangle}
+          gradient={dashboardStats.lowStockItems > 0 ? "bg-gradient-to-r from-red-500 to-red-600" : "bg-gradient-to-r from-gray-400 to-gray-500"}
+          trend={-2}
+        />
+      </div>
+
+      {/* Secondary Metrics */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 hover:shadow-lg transition-shadow duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-gradient-to-r from-orange-400 to-orange-500 rounded-xl flex items-center justify-center">
+              <Users className="w-6 h-6 text-white" />
+            </div>
+            <Target className="w-5 h-5 text-gray-400" />
+          </div>
+          <h3 className="text-2xl font-bold text-gray-900">{dashboardStats.uniqueCustomers}</h3>
+          <p className="text-gray-600 font-medium text-sm">Unique Customers</p>
+          <p className="text-gray-500 text-xs mt-1">This month</p>
+        </div>
+        
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 hover:shadow-lg transition-shadow duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-gradient-to-r from-teal-400 to-teal-500 rounded-xl flex items-center justify-center">
+              <Star className="w-6 h-6 text-white" />
+            </div>
+            <Activity className="w-5 h-5 text-gray-400" />
+          </div>
+          <h3 className="text-2xl font-bold text-gray-900">{formatCurrency(dashboardStats.averageOrderValue)}</h3>
+          <p className="text-gray-600 font-medium text-sm">Avg Order Value</p>
+          <p className="text-gray-500 text-xs mt-1">Per transaction</p>
+        </div>
+        
+        <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-200 hover:shadow-lg transition-shadow duration-300">
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-12 h-12 bg-gradient-to-r from-indigo-400 to-indigo-500 rounded-xl flex items-center justify-center">
+              <Zap className="w-6 h-6 text-white" />
+            </div>
+            <Bell className="w-5 h-5 text-gray-400" />
+          </div>
+          <h3 className="text-2xl font-bold text-gray-900">{formatCurrency(dashboardStats.inventoryValue)}</h3>
+          <p className="text-gray-600 font-medium text-sm">Inventory Value</p>
+          <p className="text-gray-500 text-xs mt-1">Total stock worth</p>
+        </div>
+      </div>
+
+      {/* Quick Actions section removed */}
+
+      {/* Main Content Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {/* Recent Sales */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow duration-300">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">Recent Sales</h3>
+              <p className="text-gray-500 text-sm">Latest transactions</p>
+            </div>
+            <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+              <ShoppingCart className="w-5 h-5 text-emerald-600" />
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            {dashboardStats.recentSales.length > 0 ? (
+              dashboardStats.recentSales.map((sale, index) => (
+                <div key={sale.id || index} className="group flex items-center justify-between p-4 rounded-xl border border-gray-100 hover:border-emerald-200 hover:bg-emerald-50 transition-all duration-200">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-gray-100 group-hover:bg-emerald-100 rounded-full flex items-center justify-center transition-colors">
+                      <Package className="w-5 h-5 text-gray-600 group-hover:text-emerald-600" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">{sale.productName}</p>
+                      <p className="text-sm text-gray-500">
+                        {sale.customer} • Qty: {sale.quantity}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {format(sale.timestamp, 'MMM dd, HH:mm')}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-emerald-600">{formatCurrency(sale.total)}</p>
+                    <p className="text-xs text-gray-500">Sale #{sale.id?.slice(-6)}</p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="text-center py-12 text-gray-500">
+                <ShoppingCart className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No recent sales</p>
+                <p className="text-xs text-gray-400">Sales will appear here</p>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Low Stock Alerts / Top Products */}
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow duration-300">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="text-xl font-bold text-gray-900">
+                {dashboardStats.lowStockItems > 0 ? 'Low Stock Alerts' : 'Top Products'}
+              </h3>
+              <p className="text-gray-500 text-sm">
+                {dashboardStats.lowStockItems > 0 ? 'Items needing attention' : 'Best performing items'}
+              </p>
+            </div>
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+              dashboardStats.lowStockItems > 0 ? 'bg-red-100' : 'bg-blue-100'
+            }`}>
+              {dashboardStats.lowStockItems > 0 ? (
+                <AlertTriangle className="w-5 h-5 text-red-600" />
+              ) : (
+                <Star className="w-5 h-5 text-blue-600" />
+              )}
+            </div>
+          </div>
+          
+          <div className="space-y-3">
+            {dashboardStats.lowStockItems > 0 ? (
+              // Show low stock items
+              dashboardStats.lowStockProducts.map((product, index) => (
+                <div key={product.id || index} className="flex items-center justify-between p-4 bg-red-50 border border-red-200 rounded-xl">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                      <AlertTriangle className="h-5 w-5 text-red-600" />
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">{product.name}</p>
+                      <p className="text-sm text-gray-600">
+                        {product.stockQuantity || 0} / {product.minStock || 0} min stock
+                      </p>
+                    </div>
+                  </div>
+                  <button className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors">
+                    Restock
+                  </button>
+                </div>
+              ))
+            ) : (
+              // Show top products
+              dashboardStats.topProducts.map((product, index) => (
+                <div key={index} className="flex items-center justify-between p-4 rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all duration-200">
+                  <div className="flex items-center space-x-3">
+                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-white font-bold ${
+                      index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : 'bg-orange-500'
+                    }`}>
+                      {index + 1}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-gray-900">{product.name}</p>
+                      <p className="text-sm text-gray-600">Top seller</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-bold text-blue-600">{formatCurrency(product.revenue)}</p>
+                    <p className="text-xs text-gray-500">Revenue</p>
+                  </div>
+                </div>
+              ))
+            )}
+            
+            {dashboardStats.lowStockItems === 0 && dashboardStats.topProducts.length === 0 && (
+              <div className="text-center py-12 text-gray-500">
+                <Star className="w-12 h-12 mx-auto mb-3 opacity-30" />
+                <p className="text-sm">No data available</p>
+                <p className="text-xs text-gray-400">Data will appear as sales are recorded</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;
