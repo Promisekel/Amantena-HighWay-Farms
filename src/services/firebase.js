@@ -30,6 +30,8 @@ import {
   getDownloadURL 
 } from 'firebase/storage';
 
+const DEFAULT_AUTHORIZED_EMAILS = ['admin@amantena.com', 'promisebansah12@gmail.com'];
+
 // Firebase configuration
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -62,11 +64,15 @@ export const signInWithGoogle = async () => {
     const { user } = result;
     
     // Check if email is authorized
-    const settingsDoc = await getDoc(doc(db, 'settings', 'app-settings'));
+    const settingsRef = doc(db, 'settings', 'app-settings');
+    const settingsDoc = await getDoc(settingsRef);
     if (!settingsDoc.exists()) {
       // If settings don't exist, create them with the first user as authorized
-      await setDoc(doc(db, 'settings', 'app-settings'), {
-        authorizedEmails: [user.email.toLowerCase()], // Store email in lowercase
+      await setDoc(settingsRef, {
+        authorizedEmails: Array.from(new Set([
+          ...DEFAULT_AUTHORIZED_EMAILS,
+          user.email.toLowerCase()
+        ])),
         autoLogout: 30,
         createdAt: serverTimestamp(),
         createdBy: user.uid
@@ -74,9 +80,16 @@ export const signInWithGoogle = async () => {
       toast.success('Welcome! You have been set as the first authorized user.');
     } else {
       const { authorizedEmails = [] } = settingsDoc.data();
+      const mergedAuthorized = Array.from(new Set([
+        ...authorizedEmails.map(email => email?.trim()).filter(Boolean),
+        ...DEFAULT_AUTHORIZED_EMAILS
+      ]));
+      if (mergedAuthorized.length !== authorizedEmails.length) {
+        await setDoc(settingsRef, { authorizedEmails: mergedAuthorized }, { merge: true });
+      }
       // Convert both the user's email and authorized emails to lowercase for comparison
       const normalizedUserEmail = user.email.toLowerCase();
-      const normalizedAuthorizedEmails = authorizedEmails.map(email => email.toLowerCase());
+      const normalizedAuthorizedEmails = mergedAuthorized.map(email => email.toLowerCase());
       
       if (!normalizedAuthorizedEmails.includes(normalizedUserEmail)) {
         await signOut(auth); // Sign out unauthorized user

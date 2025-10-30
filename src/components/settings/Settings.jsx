@@ -48,6 +48,8 @@ import { auth, db } from '../../services/firebase';
 import { logOut } from '../../services/firebase';
 import toast from 'react-hot-toast';
 
+const DEFAULT_AUTHORIZED_EMAILS = ['admin@amantena.com', 'promisebansah12@gmail.com'];
+
 const Settings = () => {
   // Initialize all state variables at the top
   const [settings, setSettings] = useState({
@@ -59,7 +61,7 @@ const Settings = () => {
     farmDescription: 'Premium agricultural products from Ghana',
     lowStockThreshold: 20,
     dateFormat: 'MM/dd/yyyy',
-    authorizedEmails: ['admin@amantena.com'],
+  authorizedEmails: [...DEFAULT_AUTHORIZED_EMAILS],
     // Security Settings
     autoLogout: 30, // Default 30 minutes
     // Other settings
@@ -555,11 +557,13 @@ const Settings = () => {
     const settingsUnsubscribe = onSnapshot(doc(db, 'settings', 'app-settings'), (doc) => {
       if (doc.exists()) {
         const firestoreSettings = doc.data();
-        const authorizedEmails = Array.from(new Set(
-          Array.isArray(firestoreSettings.authorizedEmails) 
-            ? firestoreSettings.authorizedEmails 
-            : []
-        )).filter(email => email && email.trim());
+        const existingAuthorized = Array.isArray(firestoreSettings.authorizedEmails)
+          ? firestoreSettings.authorizedEmails
+          : [];
+        const authorizedEmails = Array.from(new Set([
+          ...existingAuthorized,
+          ...DEFAULT_AUTHORIZED_EMAILS
+        ])).map(email => email?.trim()).filter(Boolean);
 
         setSettings(prev => ({
           ...prev,
@@ -606,19 +610,28 @@ const Settings = () => {
       const settingsDoc = await getDoc(doc(db, 'settings', 'app-settings'));
       if (settingsDoc.exists()) {
         const firestoreSettings = settingsDoc.data();
-        // Ensure authorizedEmails is always an array and remove any duplicates
-        const authorizedEmails = Array.from(new Set(
-          Array.isArray(firestoreSettings.authorizedEmails) 
-            ? firestoreSettings.authorizedEmails 
-            : []
-        )).filter(email => email && email.trim()); // Remove empty or whitespace-only emails
-          
+        // Ensure authorizedEmails is always an array and merge with defaults
+        const existingAuthorized = Array.isArray(firestoreSettings.authorizedEmails)
+          ? firestoreSettings.authorizedEmails
+          : [];
+        const normalizedExisting = Array.from(new Set(
+          existingAuthorized.map(email => email?.trim()).filter(Boolean)
+        ));
+        const authorizedEmails = Array.from(new Set([
+          ...normalizedExisting,
+          ...DEFAULT_AUTHORIZED_EMAILS
+        ])).map(email => email?.trim()).filter(Boolean);
+
+        if (authorizedEmails.length !== normalizedExisting.length) {
+          await setDoc(doc(db, 'settings', 'app-settings'), { authorizedEmails }, { merge: true });
+        }
+
         const updatedSettings = {
           ...settings,
           ...firestoreSettings,
           authorizedEmails
         };
-        
+
         setSettings(updatedSettings);
         localStorage.setItem('farmSettings', JSON.stringify(updatedSettings));
 
@@ -628,7 +641,10 @@ const Settings = () => {
             // If no emails are authorized, add current user's email
             const newSettings = {
               ...updatedSettings,
-              authorizedEmails: [currentUser.email]
+              authorizedEmails: Array.from(new Set([
+                ...DEFAULT_AUTHORIZED_EMAILS,
+                currentUser.email
+              ])).map(email => email?.trim()).filter(Boolean)
             };
             await setDoc(doc(db, 'settings', 'app-settings'), newSettings);
             setSettings(newSettings);
@@ -650,7 +666,9 @@ const Settings = () => {
         // Create default settings document with current user's email
         const defaultSettings = {
           ...settings,
-          authorizedEmails: currentUser ? [currentUser.email] : [],
+          authorizedEmails: currentUser
+            ? Array.from(new Set([...DEFAULT_AUTHORIZED_EMAILS, currentUser.email])).map(email => email?.trim()).filter(Boolean)
+            : [...DEFAULT_AUTHORIZED_EMAILS],
           autoLogout: 30 // Default 30 minutes
         };
         await setDoc(doc(db, 'settings', 'app-settings'), defaultSettings);
@@ -675,10 +693,12 @@ const Settings = () => {
 
       if (!Array.isArray(settings.authorizedEmails) || settings.authorizedEmails.length === 0) {
         if (currentUser) {
-          settings.authorizedEmails = [currentUser.email];
+          settings.authorizedEmails = Array.from(new Set([
+            ...DEFAULT_AUTHORIZED_EMAILS,
+            currentUser.email
+          ])).map(email => email?.trim()).filter(Boolean);
         } else {
-          toast.error('At least one authorized email is required');
-          return;
+          settings.authorizedEmails = [...DEFAULT_AUTHORIZED_EMAILS];
         }
       }
       
