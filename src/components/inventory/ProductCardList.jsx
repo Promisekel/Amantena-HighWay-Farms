@@ -1,7 +1,7 @@
 import React from 'react';
 import { Eye, Edit3, Trash, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { getProductTypeLabel, getProductTypeStyles } from './productTypes';
+import { getProductTypeLabel, getProductTypeStyles, getProductTypePlaceholder } from './productTypes';
 
 const ProductCardList = ({ product, onView, onEdit, onDelete }) => {
   const stockPercentage = Math.round((product.stockQuantity / product.maxStock) * 100);
@@ -24,6 +24,9 @@ const ProductCardList = ({ product, onView, onEdit, onDelete }) => {
   const typeLabel = getProductTypeLabel(product.type);
   const { badgeClass } = getProductTypeStyles(product.type);
 
+  const fallbackImage = getProductTypePlaceholder(product.type);
+  const imageSrc = product.imageUrl || fallbackImage;
+
   return (
     <div 
       onClick={() => onView(product)}
@@ -31,18 +34,12 @@ const ProductCardList = ({ product, onView, onEdit, onDelete }) => {
       ${isLowStock ? 'border-red-200 animate-pulse-subtle' : 'border-gray-100 hover:shadow-lg'}`}>
       <div className="p-4 flex items-center space-x-4">
         {/* Product Image/Letter */}
-        <div className="w-20 h-20 bg-gray-100 rounded-lg flex-shrink-0 flex items-center justify-center">
-          {product.imageUrl ? (
-            <img 
-              src={product.imageUrl} 
-              alt={product.name} 
-              className="w-full h-full object-cover rounded-lg"
-            />
-          ) : (
-            <div className="text-gray-400 text-3xl font-bold">
-              {product.name.charAt(0).toUpperCase()}
-            </div>
-          )}
+        <div className="w-20 h-20 bg-gray-100 rounded-lg flex-shrink-0 flex items-center justify-center overflow-hidden">
+          <img 
+            src={imageSrc} 
+            alt={product.name} 
+            className="w-full h-full object-cover rounded-lg"
+          />
         </div>
 
         {/* Product Info */}

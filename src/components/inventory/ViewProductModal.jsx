@@ -1,7 +1,7 @@
 import React from 'react';
-import { X, Package, AlertTriangle, TrendingUp } from 'lucide-react';
+import { X, AlertTriangle, TrendingUp } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { getProductTypeLabel, getProductTypeStyles } from './productTypes';
+import { getProductTypeLabel, getProductTypeStyles, getProductTypePlaceholder } from './productTypes';
 
 const ViewProductModal = ({ isOpen, onClose, product }) => {
   if (!isOpen || !product) return null;
@@ -21,6 +21,9 @@ const ViewProductModal = ({ isOpen, onClose, product }) => {
 
   const typeLabel = getProductTypeLabel(product.type);
   const { badgeClass } = getProductTypeStyles(product.type);
+
+  const fallbackImage = getProductTypePlaceholder(product.type);
+  const imageSrc = product.imageUrl || fallbackImage;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 animate-fade-in">
@@ -47,17 +50,11 @@ const ViewProductModal = ({ isOpen, onClose, product }) => {
           <div className="space-y-6">
             {/* Product Image */}
             <div className="aspect-square bg-gray-50 rounded-xl overflow-hidden shadow-inner">
-              {product.imageUrl ? (
-                <img 
-                  src={product.imageUrl} 
-                  alt={product.name} 
-                  className="w-full h-full object-contain"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center">
-                  <Package size={64} className="text-gray-400" />
-                </div>
-              )}
+              <img 
+                src={imageSrc} 
+                alt={product.name} 
+                className="w-full h-full object-contain"
+              />
             </div>
 
             {/* Basic Info */}

@@ -1,20 +1,18 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { X, Upload } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X } from 'lucide-react';
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
-import { uploadProductImage } from '../../services/cloudinary';
 import toast from 'react-hot-toast';
 import {
   productTypes,
   productVariantsByType,
   getProductTypeLabel,
-  getProductVariantMeta
+  getProductVariantMeta,
+  getProductTypePlaceholder
 } from './productTypes';
 
 const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
-  const fileInputRef = useRef(null);
   const [loading, setLoading] = useState(false);
-  const [imageFile, setImageFile] = useState(null);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -35,10 +33,6 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     }));
   };
 
-  const handleImageClick = () => {
-    fileInputRef.current?.click();
-  };
-
   useEffect(() => {
     if (product) {
       setFormData({
@@ -50,7 +44,7 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
         maxStock: product.maxStock,
         unit: product.unit,
         type: product.type,
-        imageUrl: product.imageUrl
+        imageUrl: product.imageUrl || getProductTypePlaceholder(product.type)
       });
     }
   }, [product]);
@@ -70,30 +64,12 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     ];
   })();
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setImageFile(file);
-      // Preview image
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setFormData(prev => ({ ...prev, imageUrl: e.target.result }));
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      let imageUrl = product.imageUrl;
-
-      // Upload new image if changed
-      if (imageFile) {
-        imageUrl = await uploadProductImage(imageFile);
-      }
+      const imageUrl = formData.imageUrl || getProductTypePlaceholder(formData.type);
 
       // Update product in Firestore
       const productRef = doc(db, 'products', product.id);
@@ -137,30 +113,16 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Image Upload */}
             <div className="md:col-span-2">
-              <div 
-                onClick={handleImageClick}
-                className="w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center cursor-pointer hover:border-emerald-500 transition-colors"
-              >
-                {formData.imageUrl ? (
-                  <img 
-                    src={formData.imageUrl} 
-                    alt="Product" 
-                    className="w-full h-full object-cover rounded-lg"
-                  />
-                ) : (
-                  <>
-                    <Upload size={24} className="text-gray-400 mb-2" />
-                    <span className="text-sm text-gray-500">Upload Image</span>
-                  </>
-                )}
+              <div className="w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center overflow-hidden bg-white">
+                <img 
+                  src={formData.imageUrl || getProductTypePlaceholder(formData.type)} 
+                  alt="Product"
+                  className="w-full h-full object-cover"
+                />
               </div>
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleImageChange}
-                accept="image/*"
-                className="hidden"
-              />
+              <p className="mt-2 text-xs text-gray-500">
+                Images auto-select from the product type library. Uploads are disabled.
+              </p>
             </div>
 
             {/* Product Type */}
@@ -177,7 +139,8 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
                     ...prev,
                     type: nextType,
                     name: '',
-                    unit: ''
+                    unit: '',
+                    imageUrl: getProductTypePlaceholder(nextType)
                   }));
                 }}
                 required

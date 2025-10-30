@@ -1,7 +1,7 @@
 import React from 'react';
 import { Eye, Edit3, MoreVertical, AlertTriangle, TrendingUp, TrendingDown } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
-import { getProductTypeLabel, getProductTypeStyles } from './productTypes';
+import { getProductTypeLabel, getProductTypeStyles, getProductTypePlaceholder } from './productTypes';
 
 const ProductCard = ({ product, onView, onEdit, onDelete }) => {
   // Calculate stock percentage safely - use stockQuantity as primary field
@@ -54,6 +54,9 @@ const ProductCard = ({ product, onView, onEdit, onDelete }) => {
   const typeLabel = getProductTypeLabel(product.type);
   const { badgeClass } = getProductTypeStyles(product.type);
 
+  const fallbackImage = getProductTypePlaceholder(product.type);
+  const imageSrc = product.imageUrl || fallbackImage;
+
   return (
     <div className={`rounded-xl shadow-sm border transition-all duration-200 overflow-hidden h-full flex flex-col hover:shadow-lg
       ${isLowStock 
@@ -62,20 +65,12 @@ const ProductCard = ({ product, onView, onEdit, onDelete }) => {
       
       {/* Product Image */}
       <div className="relative w-full h-56 overflow-hidden bg-gray-50">
-        {product.imageUrl ? (
-          <img 
-            src={product.imageUrl} 
-            alt={product.name}
-            className="w-full h-full object-cover transition-all duration-300 hover:scale-105"
-            style={{ imageRendering: 'crisp-edges' }}
-          />
-        ) : (
-          <div className="w-full h-full flex items-center justify-center bg-gray-100">
-            <span className="text-6xl font-bold text-gray-400">
-              {product.name?.charAt(0) || '?'}
-            </span>
-          </div>
-        )}
+        <img 
+          src={imageSrc} 
+          alt={product.name}
+          className="w-full h-full object-cover transition-all duration-300 hover:scale-105"
+          style={{ imageRendering: 'crisp-edges' }}
+        />
         
         {/* Overlay controls */}
         <div className="absolute top-0 left-0 right-0 p-3 flex justify-between items-start">

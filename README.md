@@ -86,7 +86,7 @@ The repository root contains `vercel.json` so Vercel builds from the `amantena-f
 2. On first deploy, Vercel reads `vercel.json` and runs:
 	- `npm install` inside `amantena-farms/`
 	- `npm run build` inside `amantena-farms/`
-3. Add the required environment variables (same keys as `.env.example`). In Vercel → Project Settings → Environment Variables, use the names referenced in `vercel.json` (e.g. `REACT_APP_FIREBASE_API_KEY`, `REACT_APP_FIREBASE_STORAGE_BUCKET`, `REACT_APP_CLOUDINARY_CLOUD_NAME`).
+3. Add the required environment variables (same keys as `.env.example`). In Vercel → Project Settings → Environment Variables, use the names referenced in `vercel.json` (e.g. `REACT_APP_FIREBASE_API_KEY`, `REACT_APP_FIREBASE_STORAGE_BUCKET`).
 4. Redeploy to produce the static build served from `amantena-farms/build`.
 
 > Tip: use Vercel secrets (e.g. `vercel env add`) to store sensitive values, then map them in `vercel.json` via the `@secret-name` syntax already provided.
