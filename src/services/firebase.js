@@ -119,7 +119,7 @@ export const signInWithGoogle = async () => {
     const userRef = doc(db, 'users', user.uid);
     await setDoc(userRef, {
       uid: user.uid,
-      email: user.email,
+      email: user.email?.toLowerCase(),
       displayName: user.displayName,
       photoURL: user.photoURL,
       role: 'admin', // Default role
@@ -289,20 +289,55 @@ export const onAuthStateChange = (callback) => {
 };
 
 // Utility function to check if user is admin
-export const checkUserRole = async (uid) => {
+export const checkUserRole = async (userOrUid) => {
   try {
+    const uid = typeof userOrUid === 'string' ? userOrUid : userOrUid?.uid;
+    if (!uid) {
+      throw new Error('Unable to determine user id for role check');
+    }
+
+    const authUser = typeof userOrUid === 'string' ? null : userOrUid;
     const userRef = doc(db, 'users', uid);
     const userDoc = await getDoc(userRef);
     
     if (!userDoc.exists()) {
-      // If user document doesn't exist, create it with admin role
-      await setDoc(userRef, {
+      // Seed Firestore user record for first-time sign-in
+      const payload = {
         uid,
         role: 'admin',
         createdAt: serverTimestamp(),
         lastLogin: serverTimestamp()
-      });
+      };
+
+      if (authUser?.email) {
+        payload.email = authUser.email.toLowerCase();
+      }
+      if (authUser?.displayName) {
+        payload.displayName = authUser.displayName;
+      }
+      if (authUser?.photoURL) {
+        payload.photoURL = authUser.photoURL;
+      }
+
+      await setDoc(userRef, payload, { merge: true });
       return 'admin';
+    }
+    
+    // Back-fill essential fields if they are missing
+    const existing = userDoc.data() || {};
+    const updates = {};
+    if (authUser?.email && !existing.email) {
+      updates.email = authUser.email.toLowerCase();
+    }
+    if (authUser?.displayName && !existing.displayName) {
+      updates.displayName = authUser.displayName;
+    }
+    if (authUser?.photoURL && !existing.photoURL) {
+      updates.photoURL = authUser.photoURL;
+    }
+    if (Object.keys(updates).length > 0) {
+      updates.lastLogin = serverTimestamp();
+      await updateDoc(userRef, updates);
     }
     
     return userDoc.data().role || 'admin';

@@ -30,7 +30,7 @@ export const AuthProvider = ({ children }) => {
       if (user) {
         try {
           // Check user role
-          const role = await checkUserRole(user.uid);
+          const role = await checkUserRole(user);
           if (mounted) {
             setCurrentUser(user);
             setUserRole(role || 'admin'); // Default to admin if no role set
