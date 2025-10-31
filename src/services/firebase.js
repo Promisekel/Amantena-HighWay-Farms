@@ -41,6 +41,31 @@ const normalizeEmailList = (emails = []) => {
   ));
 };
 
+const extractUserProfile = (user) => {
+  if (!user) return {};
+
+  const providerInfo = Array.isArray(user.providerData)
+    ? user.providerData.find(info => info?.email || info?.displayName || info?.photoURL)
+    : null;
+
+  const resolvedEmail = (user.email || providerInfo?.email || '').trim().toLowerCase();
+  const profile = {};
+
+  if (resolvedEmail) {
+    profile.email = resolvedEmail;
+  }
+  const displayName = user.displayName || providerInfo?.displayName;
+  if (displayName) {
+    profile.displayName = displayName;
+  }
+  const photoURL = user.photoURL || providerInfo?.photoURL;
+  if (photoURL) {
+    profile.photoURL = photoURL;
+  }
+
+  return profile;
+};
+
 // Firebase configuration
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -75,6 +100,7 @@ export const signInWithGoogle = async () => {
     if (typeof window !== 'undefined' && user?.email) {
       window.localStorage.setItem('lastAttemptedEmail', user.email);
     }
+    const profile = extractUserProfile(user);
     
     // Check if email is authorized
     const settingsRef = doc(db, 'settings', 'app-settings');
@@ -119,9 +145,7 @@ export const signInWithGoogle = async () => {
     const userRef = doc(db, 'users', user.uid);
     await setDoc(userRef, {
       uid: user.uid,
-      email: user.email?.toLowerCase(),
-      displayName: user.displayName,
-      photoURL: user.photoURL,
+      ...profile,
       role: 'admin', // Default role
       lastLogin: serverTimestamp()
     }, { merge: true }); // Use merge to preserve existing data
@@ -299,6 +323,7 @@ export const checkUserRole = async (userOrUid) => {
     const authUser = typeof userOrUid === 'string' ? null : userOrUid;
     const userRef = doc(db, 'users', uid);
     const userDoc = await getDoc(userRef);
+    const profile = extractUserProfile(authUser);
     
     if (!userDoc.exists()) {
       // Seed Firestore user record for first-time sign-in
@@ -309,15 +334,7 @@ export const checkUserRole = async (userOrUid) => {
         lastLogin: serverTimestamp()
       };
 
-      if (authUser?.email) {
-        payload.email = authUser.email.toLowerCase();
-      }
-      if (authUser?.displayName) {
-        payload.displayName = authUser.displayName;
-      }
-      if (authUser?.photoURL) {
-        payload.photoURL = authUser.photoURL;
-      }
+      Object.assign(payload, profile);
 
       await setDoc(userRef, payload, { merge: true });
       return 'admin';
@@ -326,14 +343,14 @@ export const checkUserRole = async (userOrUid) => {
     // Back-fill essential fields if they are missing
     const existing = userDoc.data() || {};
     const updates = {};
-    if (authUser?.email && !existing.email) {
-      updates.email = authUser.email.toLowerCase();
+    if (profile.email && existing.email !== profile.email) {
+      updates.email = profile.email;
     }
-    if (authUser?.displayName && !existing.displayName) {
-      updates.displayName = authUser.displayName;
+    if (profile.displayName && existing.displayName !== profile.displayName) {
+      updates.displayName = profile.displayName;
     }
-    if (authUser?.photoURL && !existing.photoURL) {
-      updates.photoURL = authUser.photoURL;
+    if (profile.photoURL && existing.photoURL !== profile.photoURL) {
+      updates.photoURL = profile.photoURL;
     }
     if (Object.keys(updates).length > 0) {
       updates.lastLogin = serverTimestamp();
