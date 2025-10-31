@@ -71,6 +71,10 @@ export const signInWithGoogle = async () => {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     const { user } = result;
+
+    if (typeof window !== 'undefined' && user?.email) {
+      window.localStorage.setItem('lastAttemptedEmail', user.email);
+    }
     
     // Check if email is authorized
     const settingsRef = doc(db, 'settings', 'app-settings');

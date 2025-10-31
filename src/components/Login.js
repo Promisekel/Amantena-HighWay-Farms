@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import { doc, getDoc } from 'firebase/firestore';
-import { db, auth } from '../services/firebase';
+import { db } from '../services/firebase';
 import { toast } from 'react-hot-toast';
-import { GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 
 const Login = () => {
   const { signIn } = useAuth();
@@ -40,73 +39,29 @@ const Login = () => {
     return () => window.removeEventListener('app-settings-updated', handleSettingsUpdate);
   }, []);
 
-  const checkEmailAuthorization = async (email) => {
-    try {
-      const settingsDoc = await getDoc(doc(db, 'settings', 'app-settings'));
-      if (settingsDoc.exists()) {
-        const settings = settingsDoc.data();
-        const authorizedEmails = settings.authorizedEmails || [];
-        return authorizedEmails.map(e => e.toLowerCase()).includes(email.toLowerCase());
-      }
-      return false;
-    } catch (error) {
-      console.error('Error checking email authorization:', error);
-      return false;
-    }
-  };
-
   const handleGoogleSignIn = async () => {
     try {
       setIsLoading(true);
       setError('');
       
-      // First get the Google credential without signing in
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      
-      if (result.user?.email) {
-        // Store the email immediately
-        window.localStorage.setItem('lastAttemptedEmail', result.user.email);
-        
-        // Check authorization before proceeding with sign in
-        const isAuthorized = await checkEmailAuthorization(result.user.email);
-        if (!isAuthorized) {
-          // Sign out immediately if not authorized
-          await auth.signOut();
-          
-          setError('Unauthorized email address. Please contact an administrator for access.');
-          toast.error('Your email is not authorized to access this system.', {
-            duration: 6000,
-            style: {
-              border: '1px solid #991B1B',
-              padding: '16px',
-              color: '#991B1B',
-              background: '#FEE2E2',
-            },
-            icon: '⚠️',
-          });
-          setIsLoading(false);
-          return;
-        }
-        
-        // If authorized, proceed with sign in
-        await signIn();
+      const user = await signIn();
+
+      if (user?.email) {
+        window.localStorage.setItem('lastAttemptedEmail', user.email);
       }
-      // Continue with sign in if authorized
     } catch (error) {
       console.error('Login error:', error);
-      // Force error state update and show toast
-      await Promise.all([
-        new Promise(resolve => {
-          setError(error.message || 'An error occurred during sign in. Please try again.');
-          resolve();
-        }),
-        toast.error(error.message || 'An error occurred during sign in. Please try again.', {
-          duration: 6000,
-        })
-      ]);
-      setIsLoading(false);
+      const message = error?.message?.includes('Unauthorized email')
+        ? 'Unauthorized email address. Please contact an administrator for access.'
+        : error?.message || 'An error occurred during sign in. Please try again.';
+
+      setError(message);
+
+      if (!error?.message?.includes('Unauthorized email')) {
+        toast.error(message, { duration: 6000 });
+      }
     }
+    setIsLoading(false);
   };
 
   return (

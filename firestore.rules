@@ -87,7 +87,7 @@ service cloud.firestore {
 
     function isAuthorizedSettingsViewer() {
       let email = request.auth.token.email;
-      let emailLower = email != null ? lowercase(email) : null;
+      let emailLower = email != null ? lower(email) : null;
       return email != null
         && resource.data.authorizedEmails != null
         && (
