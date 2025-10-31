@@ -50,6 +50,15 @@ import toast from 'react-hot-toast';
 
 const DEFAULT_AUTHORIZED_EMAILS = ['admin@amantena.com', 'promisebansah12@gmail.com'];
 
+const normalizeEmailList = (emails = []) => {
+  if (!Array.isArray(emails)) return [];
+  return Array.from(new Set(
+    emails
+      .map(email => email?.trim().toLowerCase())
+      .filter(Boolean)
+  ));
+};
+
 const Settings = () => {
   // Initialize all state variables at the top
   const [settings, setSettings] = useState({
@@ -61,7 +70,7 @@ const Settings = () => {
     farmDescription: 'Premium agricultural products from Ghana',
     lowStockThreshold: 20,
     dateFormat: 'MM/dd/yyyy',
-  authorizedEmails: [...DEFAULT_AUTHORIZED_EMAILS],
+  authorizedEmails: normalizeEmailList(DEFAULT_AUTHORIZED_EMAILS),
     // Security Settings
     autoLogout: 30, // Default 30 minutes
     // Other settings
@@ -419,8 +428,8 @@ const Settings = () => {
     }
     
     // Convert to lowercase for case-insensitive comparison
-    const normalizedNewEmail = newEmail.toLowerCase();
-    const normalizedExistingEmails = settings.authorizedEmails.map(email => email.toLowerCase());
+    const normalizedNewEmail = newEmail.trim().toLowerCase();
+    const normalizedExistingEmails = normalizeEmailList(settings.authorizedEmails);
     
     if (normalizedExistingEmails.includes(normalizedNewEmail)) {
       setEmailError('This email is already authorized');
@@ -429,7 +438,7 @@ const Settings = () => {
     setEmailError('');
     
     try {
-      const updatedEmails = [...settings.authorizedEmails, normalizedNewEmail];
+      const updatedEmails = Array.from(new Set([...normalizedExistingEmails, normalizedNewEmail]));
       
       // Save to database first
       const settingsRef = doc(db, 'settings', 'app-settings');
@@ -453,14 +462,17 @@ const Settings = () => {
 
   const handleRemoveEmail = async (emailToRemove) => {
     try {
+      const normalizedEmails = normalizeEmailList(settings.authorizedEmails);
+      const normalizedToRemove = emailToRemove?.trim().toLowerCase();
+      
       // Don't allow removing the last email
-      if (settings.authorizedEmails.length <= 1) {
+      if (normalizedEmails.length <= 1) {
         toast.error('Cannot remove the last authorized email');
         return;
       }
       
       // Show warning when trying to remove your own email
-      if (emailToRemove === currentUser?.email) {
+      if (normalizedToRemove === currentUser?.email?.toLowerCase()) {
         toast((t) => (
           <div className="flex items-start space-x-3">
             <AlertCircle className="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" />
@@ -483,7 +495,11 @@ const Settings = () => {
         return;
       }
 
-      const updatedEmails = settings.authorizedEmails.filter(email => email !== emailToRemove);
+      const updatedEmails = normalizedEmails.filter(email => email !== normalizedToRemove);
+      if (updatedEmails.length === normalizedEmails.length) {
+        toast.error('Email not found in the authorized list');
+        return;
+      }
       
       // Save to database first
       const settingsRef = doc(db, 'settings', 'app-settings');
@@ -554,16 +570,25 @@ const Settings = () => {
     };
 
     // Set up real-time listener for settings changes
-    const settingsUnsubscribe = onSnapshot(doc(db, 'settings', 'app-settings'), (doc) => {
-      if (doc.exists()) {
-        const firestoreSettings = doc.data();
-        const existingAuthorized = Array.isArray(firestoreSettings.authorizedEmails)
-          ? firestoreSettings.authorizedEmails
-          : [];
-        const authorizedEmails = Array.from(new Set([
-          ...existingAuthorized,
-          ...DEFAULT_AUTHORIZED_EMAILS
-        ])).map(email => email?.trim()).filter(Boolean);
+    const appSettingsRef = doc(db, 'settings', 'app-settings');
+    const settingsUnsubscribe = onSnapshot(appSettingsRef, async (snapshot) => {
+      if (snapshot.exists()) {
+        const firestoreSettings = snapshot.data();
+        const normalizedAuthorized = normalizeEmailList(firestoreSettings.authorizedEmails);
+        let authorizedEmails = normalizedAuthorized;
+
+        if (authorizedEmails.length === 0 && DEFAULT_AUTHORIZED_EMAILS.length > 0) {
+          authorizedEmails = normalizeEmailList([
+            ...DEFAULT_AUTHORIZED_EMAILS,
+            ...(currentUser?.email ? [currentUser.email] : [])
+          ]);
+          await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
+        } else if (
+          Array.isArray(firestoreSettings.authorizedEmails) &&
+          firestoreSettings.authorizedEmails.length !== authorizedEmails.length
+        ) {
+          await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
+        }
 
         setSettings(prev => ({
           ...prev,
@@ -600,30 +625,33 @@ const Settings = () => {
       authUnsubscribe();
       settingsUnsubscribe();
     };
-  }, []);
+  }, [currentUser]);
 
   const loadSettingsAndUsers = async () => {
     try {
       setLoading(true);
       
       // Load settings from Firestore
-      const settingsDoc = await getDoc(doc(db, 'settings', 'app-settings'));
+      const appSettingsRef = doc(db, 'settings', 'app-settings');
+      const settingsDoc = await getDoc(appSettingsRef);
       if (settingsDoc.exists()) {
         const firestoreSettings = settingsDoc.data();
-        // Ensure authorizedEmails is always an array and merge with defaults
-        const existingAuthorized = Array.isArray(firestoreSettings.authorizedEmails)
-          ? firestoreSettings.authorizedEmails
-          : [];
-        const normalizedExisting = Array.from(new Set(
-          existingAuthorized.map(email => email?.trim()).filter(Boolean)
-        ));
-        const authorizedEmails = Array.from(new Set([
-          ...normalizedExisting,
-          ...DEFAULT_AUTHORIZED_EMAILS
-        ])).map(email => email?.trim()).filter(Boolean);
+        // Normalize authorized email entries
+        let authorizedEmails = normalizeEmailList(firestoreSettings.authorizedEmails);
 
-        if (authorizedEmails.length !== normalizedExisting.length) {
-          await setDoc(doc(db, 'settings', 'app-settings'), { authorizedEmails }, { merge: true });
+        if (authorizedEmails.length === 0) {
+          authorizedEmails = normalizeEmailList([
+            ...DEFAULT_AUTHORIZED_EMAILS,
+            ...(currentUser?.email ? [currentUser.email] : [])
+          ]);
+          if (authorizedEmails.length > 0) {
+            await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
+          }
+        } else if (
+          Array.isArray(firestoreSettings.authorizedEmails) &&
+          firestoreSettings.authorizedEmails.length !== authorizedEmails.length
+        ) {
+          await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
         }
 
         const updatedSettings = {
@@ -636,31 +664,18 @@ const Settings = () => {
         localStorage.setItem('farmSettings', JSON.stringify(updatedSettings));
 
         // Check if current user's email is authorized
-        if (currentUser?.email) {
-          if (authorizedEmails.length === 0) {
-            // If no emails are authorized, add current user's email
-            const newSettings = {
-              ...updatedSettings,
-              authorizedEmails: Array.from(new Set([
-                ...DEFAULT_AUTHORIZED_EMAILS,
-                currentUser.email
-              ])).map(email => email?.trim()).filter(Boolean)
-            };
-            await setDoc(doc(db, 'settings', 'app-settings'), newSettings);
-            setSettings(newSettings);
-          } else if (!checkEmailAuthorization(currentUser.email, authorizedEmails)) {
-            // Show warning for unauthorized users
-            toast.error('Warning: Your email is not authorized. Contact an administrator for access.', {
-              duration: 10000,
-              style: {
-                border: '1px solid #991B1B',
-                background: '#FEE2E2',
-                padding: '16px',
-                color: '#991B1B',
-              },
-              icon: '⚠️',
-            });
-          }
+        if (currentUser?.email && !checkEmailAuthorization(currentUser.email, authorizedEmails)) {
+          // Show warning for unauthorized users
+          toast.error('Warning: Your email is not authorized. Contact an administrator for access.', {
+            duration: 10000,
+            style: {
+              border: '1px solid #991B1B',
+              background: '#FEE2E2',
+              padding: '16px',
+              color: '#991B1B',
+            },
+            icon: '⚠️',
+          });
         }
       } else {
         // Create default settings document with current user's email
@@ -691,15 +706,12 @@ const Settings = () => {
         return;
       }
 
-      if (!Array.isArray(settings.authorizedEmails) || settings.authorizedEmails.length === 0) {
-        if (currentUser) {
-          settings.authorizedEmails = Array.from(new Set([
-            ...DEFAULT_AUTHORIZED_EMAILS,
-            currentUser.email
-          ])).map(email => email?.trim()).filter(Boolean);
-        } else {
-          settings.authorizedEmails = [...DEFAULT_AUTHORIZED_EMAILS];
-        }
+      let authorizedEmails = normalizeEmailList(settings.authorizedEmails);
+      if (authorizedEmails.length === 0) {
+        authorizedEmails = normalizeEmailList([
+          ...DEFAULT_AUTHORIZED_EMAILS,
+          ...(currentUser?.email ? [currentUser.email] : [])
+        ]);
       }
       
       // Save to Firestore
@@ -707,7 +719,8 @@ const Settings = () => {
 
       // Prepare the settings object
       const settingsToSave = {
-        ...settings,
+  ...settings,
+  authorizedEmails,
         appName: settings.appName || settings.farmName,
         appDescription: settings.appDescription || settings.farmDescription,
         farmName: settings.appName || settings.farmName,
@@ -729,7 +742,12 @@ const Settings = () => {
       }));
 
       // Save to localStorage as backup
-      localStorage.setItem('farmSettings', JSON.stringify(settings));
+      localStorage.setItem('farmSettings', JSON.stringify(settingsToSave));
+
+      setSettings(prev => ({
+        ...prev,
+        ...settingsToSave
+      }));
       
       toast.success('Settings saved successfully!');
     } catch (error) {

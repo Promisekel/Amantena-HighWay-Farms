@@ -32,6 +32,15 @@ import {
 
 const DEFAULT_AUTHORIZED_EMAILS = ['admin@amantena.com', 'promisebansah12@gmail.com'];
 
+const normalizeEmailList = (emails = []) => {
+  if (!Array.isArray(emails)) return [];
+  return Array.from(new Set(
+    emails
+      .map(email => email?.trim().toLowerCase())
+      .filter(Boolean)
+  ));
+};
+
 // Firebase configuration
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -80,17 +89,21 @@ export const signInWithGoogle = async () => {
       toast.success('Welcome! You have been set as the first authorized user.');
     } else {
       const { authorizedEmails = [] } = settingsDoc.data();
-      const mergedAuthorized = Array.from(new Set([
-        ...authorizedEmails.map(email => email?.trim()).filter(Boolean),
-        ...DEFAULT_AUTHORIZED_EMAILS
-      ]));
-      if (mergedAuthorized.length !== authorizedEmails.length) {
-        await setDoc(settingsRef, { authorizedEmails: mergedAuthorized }, { merge: true });
+      let normalizedAuthorizedEmails = normalizeEmailList(authorizedEmails);
+
+      if (normalizedAuthorizedEmails.length === 0) {
+        normalizedAuthorizedEmails = normalizeEmailList([
+          ...DEFAULT_AUTHORIZED_EMAILS,
+          user.email
+        ]);
+        if (normalizedAuthorizedEmails.length > 0) {
+          await setDoc(settingsRef, { authorizedEmails: normalizedAuthorizedEmails }, { merge: true });
+        }
+      } else if (authorizedEmails.length !== normalizedAuthorizedEmails.length) {
+        await setDoc(settingsRef, { authorizedEmails: normalizedAuthorizedEmails }, { merge: true });
       }
       // Convert both the user's email and authorized emails to lowercase for comparison
       const normalizedUserEmail = user.email.toLowerCase();
-      const normalizedAuthorizedEmails = mergedAuthorized.map(email => email.toLowerCase());
-      
       if (!normalizedAuthorizedEmails.includes(normalizedUserEmail)) {
         await signOut(auth); // Sign out unauthorized user
         toast.error('Access Denied: Your email is not authorized to access this application. Please contact the administrator.');
