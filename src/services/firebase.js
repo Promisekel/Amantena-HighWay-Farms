@@ -325,39 +325,28 @@ export const checkUserRole = async (userOrUid) => {
     const userDoc = await getDoc(userRef);
     const profile = extractUserProfile(authUser);
     
-    if (!userDoc.exists()) {
-      // Seed Firestore user record for first-time sign-in
-      const payload = {
-        uid,
-        role: 'admin',
-        createdAt: serverTimestamp(),
-        lastLogin: serverTimestamp()
-      };
+    if (userDoc.exists()) {
+      // Back-fill essential fields if they are missing
+      const existing = userDoc.data() || {};
+      const updates = {};
+      if (profile.email && existing.email !== profile.email) {
+        updates.email = profile.email;
+      }
+      if (profile.displayName && existing.displayName !== profile.displayName) {
+        updates.displayName = profile.displayName;
+      }
+      if (profile.photoURL && existing.photoURL !== profile.photoURL) {
+        updates.photoURL = profile.photoURL;
+      }
+      if (Object.keys(updates).length > 0) {
+        updates.lastLogin = serverTimestamp();
+        await updateDoc(userRef, updates);
+      }
+      return existing.role || 'admin';
+    }
 
-      Object.assign(payload, profile);
-
-      await setDoc(userRef, payload, { merge: true });
-      return 'admin';
-    }
-    
-    // Back-fill essential fields if they are missing
-    const existing = userDoc.data() || {};
-    const updates = {};
-    if (profile.email && existing.email !== profile.email) {
-      updates.email = profile.email;
-    }
-    if (profile.displayName && existing.displayName !== profile.displayName) {
-      updates.displayName = profile.displayName;
-    }
-    if (profile.photoURL && existing.photoURL !== profile.photoURL) {
-      updates.photoURL = profile.photoURL;
-    }
-    if (Object.keys(updates).length > 0) {
-      updates.lastLogin = serverTimestamp();
-      await updateDoc(userRef, updates);
-    }
-    
-    return userDoc.data().role || 'admin';
+    // No user record yet; defer creation until authorization succeeds
+    return 'admin';
   } catch (error) {
     console.error('Error checking user role:', error);
     return 'admin'; // Default to admin role on error
