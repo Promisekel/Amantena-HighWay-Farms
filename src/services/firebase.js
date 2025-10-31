@@ -41,6 +41,102 @@ const normalizeEmailList = (emails = []) => {
   ));
 };
 
+const UNAUTHORIZED_ERROR = 'Unauthorized email address';
+const UNAUTHORIZED_TOAST_MESSAGE = 'Access Denied: Your email is not authorized to access this application. Please contact the administrator.';
+const unauthorizedToastOptions = {
+  duration: 6000,
+  style: {
+    border: '1px solid #991B1B',
+    padding: '16px',
+    color: '#991B1B',
+    background: '#FEE2E2'
+  },
+  icon: '⚠️'
+};
+
+const rememberLastAttemptedEmail = (email) => {
+  if (typeof window !== 'undefined' && email) {
+    window.localStorage.setItem('lastAttemptedEmail', email);
+  }
+};
+
+const signOutUnauthorized = async (email, { showToast = true } = {}) => {
+  rememberLastAttemptedEmail(email);
+  try {
+    await signOut(auth);
+  } catch (signOutError) {
+    console.error('Error signing out unauthorized user:', signOutError);
+  }
+  if (showToast) {
+    toast.error(UNAUTHORIZED_TOAST_MESSAGE, unauthorizedToastOptions);
+  }
+  throw new Error(UNAUTHORIZED_ERROR);
+};
+
+const ensureAuthorizedUser = async (user, { allowBootstrap = false, showToast = true } = {}) => {
+  const profile = extractUserProfile(user);
+  const normalizedEmail = profile.email;
+
+  if (!normalizedEmail) {
+    await signOutUnauthorized(user?.email || null, { showToast });
+  }
+
+  const settingsRef = doc(db, 'settings', 'app-settings');
+  let settingsSnapshot;
+
+  try {
+    settingsSnapshot = await getDoc(settingsRef);
+  } catch (error) {
+    if (error?.code === 'permission-denied') {
+      console.warn('Permission denied while checking authorization:', error);
+      await signOutUnauthorized(normalizedEmail, { showToast });
+    }
+    throw error;
+  }
+
+  let authorizedEmails = [];
+
+  if (!settingsSnapshot.exists()) {
+    if (allowBootstrap) {
+      authorizedEmails = normalizeEmailList([
+        ...DEFAULT_AUTHORIZED_EMAILS,
+        normalizedEmail
+      ]);
+      await setDoc(settingsRef, {
+        authorizedEmails,
+        autoLogout: 30,
+        createdAt: serverTimestamp(),
+        createdBy: user.uid
+      }, { merge: true });
+    } else {
+      await signOutUnauthorized(normalizedEmail, { showToast });
+    }
+  } else {
+    const settingsData = settingsSnapshot.data() || {};
+    authorizedEmails = normalizeEmailList(settingsData.authorizedEmails);
+
+    if (authorizedEmails.length === 0) {
+      const defaultEmails = normalizeEmailList(DEFAULT_AUTHORIZED_EMAILS);
+      if (allowBootstrap) {
+        const bootstrapEmails = normalizeEmailList([
+          ...defaultEmails,
+          normalizedEmail
+        ]);
+        await setDoc(settingsRef, { authorizedEmails: bootstrapEmails }, { merge: true });
+        authorizedEmails = bootstrapEmails;
+      } else {
+        authorizedEmails = defaultEmails;
+      }
+    }
+
+    if (!authorizedEmails.includes(normalizedEmail)) {
+      await signOutUnauthorized(normalizedEmail, { showToast });
+    }
+  }
+
+  return { profile, authorizedEmails };
+};
+
 const extractUserProfile = (user) => {
   if (!user) return {};
 
@@ -96,50 +192,7 @@ export const signInWithGoogle = async () => {
   try {
     const result = await signInWithPopup(auth, googleProvider);
     const { user } = result;
-
-    if (typeof window !== 'undefined' && user?.email) {
-      window.localStorage.setItem('lastAttemptedEmail', user.email);
-    }
-    const profile = extractUserProfile(user);
-    
-    // Check if email is authorized
-    const settingsRef = doc(db, 'settings', 'app-settings');
-    const settingsDoc = await getDoc(settingsRef);
-    if (!settingsDoc.exists()) {
-      // If settings don't exist, create them with the first user as authorized
-      await setDoc(settingsRef, {
-        authorizedEmails: Array.from(new Set([
-          ...DEFAULT_AUTHORIZED_EMAILS,
-          user.email.toLowerCase()
-        ])),
-        autoLogout: 30,
-        createdAt: serverTimestamp(),
-        createdBy: user.uid
-      });
-      toast.success('Welcome! You have been set as the first authorized user.');
-    } else {
-      const { authorizedEmails = [] } = settingsDoc.data();
-      let normalizedAuthorizedEmails = normalizeEmailList(authorizedEmails);
-
-      if (normalizedAuthorizedEmails.length === 0) {
-        normalizedAuthorizedEmails = normalizeEmailList([
-          ...DEFAULT_AUTHORIZED_EMAILS,
-          user.email
-        ]);
-        if (normalizedAuthorizedEmails.length > 0) {
-          await setDoc(settingsRef, { authorizedEmails: normalizedAuthorizedEmails }, { merge: true });
-        }
-      } else if (authorizedEmails.length !== normalizedAuthorizedEmails.length) {
-        await setDoc(settingsRef, { authorizedEmails: normalizedAuthorizedEmails }, { merge: true });
-      }
-      // Convert both the user's email and authorized emails to lowercase for comparison
-      const normalizedUserEmail = user.email.toLowerCase();
-      if (!normalizedAuthorizedEmails.includes(normalizedUserEmail)) {
-        await signOut(auth); // Sign out unauthorized user
-        toast.error('Access Denied: Your email is not authorized to access this application. Please contact the administrator.');
-        throw new Error('Unauthorized email address');
-      }
-    }
+    const { profile } = await ensureAuthorizedUser(user, { allowBootstrap: true, showToast: true });
     
     // Update or create user document in Firestore
     const userRef = doc(db, 'users', user.uid);
@@ -154,9 +207,6 @@ export const signInWithGoogle = async () => {
     return user;
   } catch (error) {
     console.error('Google sign-in error:', error);
-    if (!error.message.includes('Unauthorized email')) {
-      toast.error('Login failed. Please try again.');
-    }
     throw error;
   }
 };
@@ -321,9 +371,15 @@ export const checkUserRole = async (userOrUid) => {
     }
 
     const authUser = typeof userOrUid === 'string' ? null : userOrUid;
+    let profile = {};
+
+    if (authUser) {
+      const result = await ensureAuthorizedUser(authUser, { allowBootstrap: false, showToast: true });
+      profile = result.profile;
+    }
+
     const userRef = doc(db, 'users', uid);
     const userDoc = await getDoc(userRef);
-    const profile = extractUserProfile(authUser);
     
     if (userDoc.exists()) {
       // Back-fill essential fields if they are missing
@@ -348,6 +404,9 @@ export const checkUserRole = async (userOrUid) => {
     // No user record yet; defer creation until authorization succeeds
     return 'admin';
   } catch (error) {
+    if (error?.message === UNAUTHORIZED_ERROR) {
+      throw error;
+    }
     console.error('Error checking user role:', error);
     return 'admin'; // Default to admin role on error
   }

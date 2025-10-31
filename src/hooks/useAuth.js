@@ -36,9 +36,17 @@ export const AuthProvider = ({ children }) => {
             setUserRole(role || 'admin'); // Default to admin if no role set
           }
         } catch (error) {
-          console.error('Error checking user role:', error);
-          if (mounted) {
-            setUserRole('admin'); // Fallback to admin role
+          if (error?.message?.includes('Unauthorized email')) {
+            console.warn('Unauthorized user detected. Signing out.');
+            if (mounted) {
+              setCurrentUser(null);
+              setUserRole(null);
+            }
+          } else {
+            console.error('Error checking user role:', error);
+            if (mounted) {
+              setUserRole('admin'); // Fallback to admin role
+            }
           }
         }
       } else {
