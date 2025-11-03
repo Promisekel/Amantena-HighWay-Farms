@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Grid, List as ListIcon, Search, Package, AlertTriangle, Plus } from 'lucide-react';
+import { Grid, List as ListIcon, Search, Package, AlertTriangle, Plus, DollarSign } from 'lucide-react';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import InventoryTabs from './InventoryTabs';
@@ -151,6 +151,7 @@ const InventoryPage = () => {
       const stockQuantity = Number(product.stockQuantity ?? product.currentStock ?? 0) || 0;
       const minStock = Number(product.minStock) || 0;
       const inventoryValue = Number(product.inventoryValue) || (Number(product.price) || 0) * Math.max(stockQuantity, 0);
+      const unitPrice = Number(product.price) || 0;
 
       acc.totalProducts += 1;
 
@@ -159,17 +160,23 @@ const InventoryPage = () => {
       }
 
       acc.totalInventoryValue += inventoryValue;
+      acc.totalUnitPriceSum += unitPrice;
       return acc;
     }, {
       totalProducts: 0,
       lowStockCount: 0,
-      totalInventoryValue: 0
+      totalInventoryValue: 0,
+      totalUnitPriceSum: 0
     });
   }, [products]);
 
   const totalProducts = inventorySummary.totalProducts;
   const lowStockProducts = inventorySummary.lowStockCount;
   const formattedInventoryValue = Number(inventorySummary.totalInventoryValue || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+  const formattedUnitPriceSum = Number(inventorySummary.totalUnitPriceSum || 0).toLocaleString(undefined, {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
@@ -198,7 +205,7 @@ const InventoryPage = () => {
           </div>
 
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
             <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 hover:shadow-md transition-shadow">
               <div className="flex items-center">
                 <div className="p-3 rounded-full bg-blue-100">
@@ -227,6 +234,19 @@ const InventoryPage = () => {
                   <p className="text-xs text-gray-500 mt-1">
                     {lowStockProducts > 0 ? 'Needs attention' : 'All good'}
                   </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100 hover:shadow-md transition-shadow">
+              <div className="flex items-center">
+                <div className="p-3 rounded-full bg-emerald-100">
+                  <DollarSign className="h-8 w-8 text-emerald-600" />
+                </div>
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-emerald-900">Sum of Unit Prices</p>
+                  <p className="text-2xl font-bold text-emerald-600">GH₵{formattedUnitPriceSum}</p>
+                  <p className="text-xs text-gray-500 mt-1">Aggregated list price total</p>
                 </div>
               </div>
             </div>
