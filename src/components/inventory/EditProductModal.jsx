@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { doc, updateDoc } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { doc } from 'firebase/firestore';
+import { db, updateProduct, auth } from '../../services/firebase';
 import toast from 'react-hot-toast';
 import {
   productTypes,
@@ -71,14 +71,16 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     try {
       const imageUrl = formData.imageUrl || getProductTypePlaceholder(formData.type);
 
-      // Update product in Firestore
-      const productRef = doc(db, 'products', product.id);
-      await updateDoc(productRef, {
+      // Update product in Firestore via service so stock history is recorded
+      await updateProduct(product.id, {
         ...formData,
         imageUrl,
         lastUpdated: new Date(),
-        stockTrend: ((formData.stockQuantity - product.stockQuantity) / product.stockQuantity) * 100,
-        currentStock: formData.stockQuantity // Keep for backward compatibility
+        stockTrend: ((formData.stockQuantity - product.stockQuantity) / (product.stockQuantity || 1)) * 100,
+        currentStock: formData.stockQuantity, // Keep for backward compatibility
+        updatedBy: auth.currentUser?.uid,
+        updatedByEmail: auth.currentUser?.email,
+        stockReason: 'Manual update via edit form'
       });
 
       toast.success('Product updated successfully');

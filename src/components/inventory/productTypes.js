@@ -8,7 +8,7 @@ import meatBoneImage from '../../Placeholders/Meat & Bone (60% Protein).webp';
 import farmwaySoyaImage from '../../Placeholders/Farmway Soya.jpg';
 import eggCrateImage from '../../Placeholders/Egg Crate (Small, Medium, Large).jpeg';
 import additechConcentrateImage from '../../Placeholders/Additech Layer Concentrate.png';
-import champrixConcentrateImage from '../../Placeholders/Champrix Concentrate (Layer 5%, Intraco Layer 5%).webp';
+import champrixConcentrateImage from '../../Placeholders/Champrix Concentrate (Layer 5%, Intraco Layer 5%).jpg';
 import koudjisProductsImage from '../../Placeholders/Koudjis Products.webp';
 import layerConcentrateImage from '../../Placeholders/Layer Concentrate (KLC 5%, KLC 25%).webp';
 import broilerConcentrateImage from '../../Placeholders/Broiler Concentrate (All Variants).jpg';

@@ -47,14 +47,7 @@ export const useProducts = () => {
       }
 
       // Add stock movement for initial stock
-      await addStockMovement({
-        productId,
-        productName: productData.name,
-        type: 'in',
-        quantity: productData.currentStock,
-        reason: 'Initial stock',
-        userId: 'system'
-      });
+      // initial stock already recorded by addProduct as initial stockHistory entry
 
       // Refresh products list
       await fetchProducts();
@@ -143,11 +136,8 @@ export const useSales = () => {
         userId: saleData.soldBy || 'system'
       });
 
-      // Update product stock
-      // Note: This should be done in a transaction in production
-      await updateProduct(saleData.productId, {
-        currentStock: saleData.newStock
-      });
+      // addStockMovement updates the product stock and records history transactionally,
+      // so no separate call to updateProduct is required here.
 
       await fetchSales();
       return saleId;

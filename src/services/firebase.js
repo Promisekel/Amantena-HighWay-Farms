@@ -21,7 +21,8 @@ import {
   query,
   orderBy,
   where,
-  serverTimestamp 
+  serverTimestamp,
+  runTransaction
 } from 'firebase/firestore';
 import { 
   getStorage, 
@@ -230,6 +231,24 @@ export const addProduct = async (productData) => {
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
+
+    // create initial stock history entry
+    try {
+      const initialQty = Number(productData.stockQuantity ?? productData.currentStock ?? 0);
+      const historyRef = doc(collection(db, `products/${docRef.id}/stockHistory`));
+      await setDoc(historyRef, {
+        previousQty: 0,
+        newQty: initialQty,
+        delta: initialQty,
+        reason: 'Initial stock',
+        userId: productData.createdBy || 'system',
+        userEmail: productData.createdByEmail || null,
+        timestamp: serverTimestamp()
+      });
+    } catch (err) {
+      console.error('Failed to write initial stock history:', err);
+    }
+
     return docRef.id;
   } catch (error) {
     console.error('Error adding product:', error);
@@ -240,10 +259,43 @@ export const addProduct = async (productData) => {
 export const updateProduct = async (productId, productData) => {
   try {
     const productRef = doc(db, 'products', productId);
-    await updateDoc(productRef, {
-      ...productData,
-      updatedAt: serverTimestamp()
-    });
+    // If stock fields are being changed, do it in a transaction and record history
+    const incomingStock = productData.stockQuantity ?? productData.currentStock ?? undefined;
+
+    if (typeof incomingStock === 'number') {
+      await runTransaction(db, async (transaction) => {
+        const prodSnap = await transaction.get(productRef);
+        if (!prodSnap.exists()) throw new Error('Product not found');
+
+        const existing = prodSnap.data();
+        const previousQty = Number(existing.stockQuantity ?? existing.currentStock ?? 0);
+        const newQty = Number(incomingStock);
+        const delta = newQty - previousQty;
+
+        transaction.update(productRef, {
+          ...productData,
+          stockQuantity: newQty,
+          currentStock: newQty,
+          updatedAt: serverTimestamp()
+        });
+
+        const historyRef = doc(collection(db, `products/${productId}/stockHistory`));
+        transaction.set(historyRef, {
+          previousQty,
+          newQty,
+          delta,
+          reason: productData.stockReason || 'Manual update',
+          userId: productData.updatedBy || 'system',
+          userEmail: productData.updatedByEmail || null,
+          timestamp: serverTimestamp()
+        });
+      });
+    } else {
+      await updateDoc(productRef, {
+        ...productData,
+        updatedAt: serverTimestamp()
+      });
+    }
   } catch (error) {
     console.error('Error updating product:', error);
     throw error;
@@ -329,12 +381,51 @@ export const getAllSales = async () => {
 // Stock movement tracking
 export const addStockMovement = async (movementData) => {
   try {
-    const docRef = await addDoc(collection(db, 'stockMovements'), {
+    // Add movement log
+    const movementRef = await addDoc(collection(db, 'stockMovements'), {
       ...movementData,
       date: serverTimestamp(),
       createdAt: serverTimestamp()
     });
-    return docRef.id;
+
+    // Update product stock and write product-specific stock history in a transaction
+    const productId = movementData.productId;
+    const qty = Number(movementData.quantity) || 0;
+    const type = (movementData.type || 'in').toLowerCase();
+
+    if (productId) {
+      await runTransaction(db, async (transaction) => {
+        const productRef = doc(db, 'products', productId);
+        const prodSnap = await transaction.get(productRef);
+        if (!prodSnap.exists()) return;
+        const existing = prodSnap.data();
+        const previousQty = Number(existing.stockQuantity ?? existing.currentStock ?? 0);
+        const newQty = type === 'in' ? previousQty + qty : Math.max(0, previousQty - qty);
+        const delta = newQty - previousQty;
+
+        transaction.update(productRef, {
+          stockQuantity: newQty,
+          currentStock: newQty,
+          lastUpdated: serverTimestamp(),
+          stockTrend: (previousQty === 0) ? 0 : ((newQty - previousQty) / (previousQty || 1)) * 100
+        });
+
+        const historyRef = doc(collection(db, `products/${productId}/stockHistory`));
+        transaction.set(historyRef, {
+          previousQty,
+          newQty,
+          delta,
+          reason: movementData.reason || (type === 'in' ? 'Stock in' : 'Stock out'),
+          movementType: type,
+          userId: movementData.userId || 'system',
+          userEmail: movementData.userEmail || null,
+          timestamp: serverTimestamp(),
+          movementRef: movementRef.id
+        });
+      });
+    }
+
+    return movementRef.id;
   } catch (error) {
     console.error('Error adding stock movement:', error);
     throw error;
