@@ -56,6 +56,16 @@ const ProductCard = ({ product, onView, onEdit, onDelete }) => {
 
   const fallbackImage = getProductTypePlaceholder(product.type);
   const imageSrc = product.imageUrl || fallbackImage;
+  const price = Number(product.price) || 0;
+  const inventoryValue = Number(product.inventoryValue) || price * Math.max(currentStock, 0);
+
+  const handleImageError = (event) => {
+    if (!event?.target) return;
+    if (!event.target.dataset.fallbackApplied) {
+      event.target.dataset.fallbackApplied = 'true';
+      event.target.src = fallbackImage;
+    }
+  };
 
   return (
     <div className={`rounded-xl shadow-sm border transition-all duration-200 overflow-hidden h-full flex flex-col hover:shadow-lg
@@ -70,6 +80,7 @@ const ProductCard = ({ product, onView, onEdit, onDelete }) => {
           alt={product.name}
           className="w-full h-full object-cover transition-all duration-300 hover:scale-105"
           style={{ imageRendering: 'crisp-edges' }}
+          onError={handleImageError}
         />
         
         {/* Overlay controls */}
@@ -128,8 +139,15 @@ const ProductCard = ({ product, onView, onEdit, onDelete }) => {
         {/* Price and Stock Info */}
         <div className="flex justify-between items-end mb-4">
           <div>
-            <span className="text-2xl font-bold text-emerald-600">GH₵{product.price}</span>
+            <span className="text-2xl font-bold text-emerald-600">GH₵{price.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2
+            })}</span>
             <p className="text-sm text-gray-500">{product.unit}</p>
+            <p className="text-xs text-gray-500 mt-1">Total Value: GH₵{inventoryValue.toLocaleString(undefined, {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2
+            })}</p>
           </div>
           <div className="text-right">
             <span className="text-xl font-bold text-gray-900">{currentStock}</span>

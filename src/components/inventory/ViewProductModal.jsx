@@ -24,6 +24,16 @@ const ViewProductModal = ({ isOpen, onClose, product }) => {
 
   const fallbackImage = getProductTypePlaceholder(product.type);
   const imageSrc = product.imageUrl || fallbackImage;
+  const price = Number(product.price) || 0;
+  const inventoryValue = Number(product.inventoryValue) || price * Math.max(Number(product.stockQuantity) || 0, 0);
+
+  const handleImageError = (event) => {
+    if (!event?.target) return;
+    if (!event.target.dataset.fallbackApplied) {
+      event.target.dataset.fallbackApplied = 'true';
+      event.target.src = fallbackImage;
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 animate-fade-in">
@@ -54,6 +64,7 @@ const ViewProductModal = ({ isOpen, onClose, product }) => {
                 src={imageSrc} 
                 alt={product.name} 
                 className="w-full h-full object-contain"
+                onError={handleImageError}
               />
             </div>
 
@@ -73,9 +84,18 @@ const ViewProductModal = ({ isOpen, onClose, product }) => {
               <p className="text-gray-600">{product.description || 'No description available.'}</p>
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-3xl font-bold text-emerald-600 mb-1">
-                  GH₵{product.price}
+                  GH₵{price.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                  })}
                 </div>
                 <div className="text-gray-500 text-sm">{product.unit}</div>
+                <div className="text-gray-500 text-sm mt-1">
+                  Total value: GH₵{inventoryValue.toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2
+                  })}
+                </div>
               </div>
             </div>
           </div>

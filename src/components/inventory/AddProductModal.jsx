@@ -35,9 +35,6 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
         return;
       }
 
-    // Get the placeholder image URL for the selected product type
-    const imageUrl = getProductTypePlaceholder(formData.type);
-
       // Convert numeric strings to numbers with proper validation
       const price = parseFloat(formData.price);
       const currentStock = parseInt(formData.currentStock);
@@ -77,7 +74,7 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
         currentStock, // Keep for backward compatibility
         minStock,
         maxStock,
-        imageUrl,
+        inventoryValue: price * currentStock,
         createdAt: serverTimestamp(),
         lastUpdated: serverTimestamp(),
         stockTrend: 0

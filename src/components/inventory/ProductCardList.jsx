@@ -7,6 +7,7 @@ const ProductCardList = ({ product, onView, onEdit, onDelete }) => {
   const stockPercentage = Math.round((product.stockQuantity / product.maxStock) * 100);
   const isLowStock = product.stockQuantity <= product.minStock;
   const isMediumStock = product.stockQuantity <= product.maxStock * 0.7;
+  const stockTrend = Number(product.stockTrend) || 0;
 
   // Stock status colors and text
   const getStatusColor = () => {
@@ -26,6 +27,16 @@ const ProductCardList = ({ product, onView, onEdit, onDelete }) => {
 
   const fallbackImage = getProductTypePlaceholder(product.type);
   const imageSrc = product.imageUrl || fallbackImage;
+  const price = Number(product.price) || 0;
+  const inventoryValue = Number(product.inventoryValue) || price * Math.max(product.stockQuantity || 0, 0);
+
+  const handleImageError = (event) => {
+    if (!event?.target) return;
+    if (!event.target.dataset.fallbackApplied) {
+      event.target.dataset.fallbackApplied = 'true';
+      event.target.src = fallbackImage;
+    }
+  };
 
   return (
     <div 
@@ -39,6 +50,7 @@ const ProductCardList = ({ product, onView, onEdit, onDelete }) => {
             src={imageSrc} 
             alt={product.name} 
             className="w-full h-full object-cover rounded-lg"
+            onError={handleImageError}
           />
         </div>
 
@@ -75,13 +87,13 @@ const ProductCardList = ({ product, onView, onEdit, onDelete }) => {
           <div className="flex items-center space-x-4 mt-2 text-sm">
             <span className="text-gray-500">{product.unit}</span>
             <div className="flex items-center space-x-1">
-              {product.stockTrend > 0 ? (
+              {stockTrend > 0 ? (
                 <TrendingUp size={14} className="text-green-500" />
               ) : (
                 <TrendingDown size={14} className="text-red-500" />
               )}
-              <span className={product.stockTrend > 0 ? 'text-green-600' : 'text-red-600'}>
-                {Math.abs(product.stockTrend)}%
+              <span className={stockTrend > 0 ? 'text-green-600' : 'text-red-600'}>
+                {Math.abs(stockTrend)}%
               </span>
             </div>
             <span className="text-gray-500">
@@ -95,7 +107,14 @@ const ProductCardList = ({ product, onView, onEdit, onDelete }) => {
 
         {/* Price & Stock */}
         <div className="text-right flex-shrink-0 mr-4">
-          <div className="text-xl font-bold text-green-600">GH₵{product.price}</div>
+          <div className="text-xl font-bold text-green-600">GH₵{price.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+          })}</div>
+          <div className="text-sm text-gray-500">Total Value: GH₵{inventoryValue.toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+          })}</div>
           <div className="text-lg font-bold text-gray-900">{product.stockQuantity}</div>
           <div className={`text-sm font-medium ${getStatusColor()}`}>
             {isLowStock ? 'Low Stock' : isMediumStock ? 'Medium Stock' : 'In Stock'}

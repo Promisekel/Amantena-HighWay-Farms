@@ -69,12 +69,13 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     setLoading(true);
 
     try {
-      const imageUrl = formData.imageUrl || getProductTypePlaceholder(formData.type);
+  const hasCustomImage = formData.imageUrl && /^https?:\/\//i.test(formData.imageUrl);
+  const imageUrl = hasCustomImage ? formData.imageUrl : null;
 
       // Update product in Firestore via service so stock history is recorded
       await updateProduct(product.id, {
         ...formData,
-        imageUrl,
+  imageUrl,
         lastUpdated: new Date(),
         stockTrend: ((formData.stockQuantity - product.stockQuantity) / (product.stockQuantity || 1)) * 100,
         currentStock: formData.stockQuantity, // Keep for backward compatibility

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Grid, List as ListIcon, Search, Package, AlertTriangle, Plus } from 'lucide-react';
 import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -31,18 +31,27 @@ const InventoryPage = () => {
     
     const unsubscribe = onSnapshot(q, 
       (snapshot) => {
-        const productsData = snapshot.docs.map(doc => {
-          const data = doc.data();
-          // Normalize stock data - use stockQuantity as primary, fallback to currentStock
-          const stockQuantity = data.stockQuantity !== undefined ? data.stockQuantity : (data.currentStock || 0);
-          
+        const productsData = snapshot.docs.map((docSnapshot) => {
+          const data = docSnapshot.data() || {};
+
+          const rawStock = data.stockQuantity ?? data.currentStock ?? data.quantity ?? 0;
+          const stockQuantity = Number(rawStock) || 0;
+          const price = Number(data.price) || 0;
+          const minStock = Number(data.minStock) || 0;
+          const maxStock = Number(data.maxStock) || 100;
+          const inventoryValue = price * Math.max(stockQuantity, 0);
+          const stockTrend = Number(data.stockTrend) || 0;
+
           return {
-            id: doc.id,
+            id: docSnapshot.id,
             ...data,
+            price,
             stockQuantity,
-            currentStock: stockQuantity, // Keep both for compatibility
-            maxStock: data.maxStock || 100,
-            minStock: data.minStock || 10,
+            currentStock: stockQuantity,
+            minStock,
+            maxStock,
+            inventoryValue,
+            stockTrend,
             lastUpdated: data.lastUpdated?.toDate() || data.createdAt?.toDate() || new Date(),
             createdAt: data.createdAt?.toDate() || new Date()
           };
@@ -128,49 +137,42 @@ const InventoryPage = () => {
     toast.success('Product updated successfully');
   };
 
-  // Calculate statistics with improved accuracy
-  const stats = products?.reduce((acc, product) => {
-    if (!product || !product.name) {
+  const inventorySummary = useMemo(() => {
+    return (products || []).reduce((acc, product) => {
+      if (!product || !product.name) {
+        return acc;
+      }
+
+      const status = (product.status || '').toLowerCase();
+      if (status === 'archived' || status === 'inactive') {
+        return acc;
+      }
+
+      const stockQuantity = Number(product.stockQuantity ?? product.currentStock ?? 0) || 0;
+      const minStock = Number(product.minStock) || 0;
+      const inventoryValue = Number(product.inventoryValue) || (Number(product.price) || 0) * Math.max(stockQuantity, 0);
+
+      acc.totalProducts += 1;
+
+      if (minStock > 0 && stockQuantity <= minStock) {
+        acc.lowStockCount += 1;
+      }
+
+      acc.totalInventoryValue += inventoryValue;
       return acc;
-    }
+    }, {
+      totalProducts: 0,
+      lowStockCount: 0,
+      totalInventoryValue: 0
+    });
+  }, [products]);
 
-    const status = (product.status || '').toLowerCase();
-    if (status === 'archived' || status === 'inactive') {
-      return acc;
-    }
-
-  const stockQuantityRaw = product.stockQuantity ?? product.currentStock ?? product.quantity ?? 0;
-  const parsedStock = Number(stockQuantityRaw);
-  const stockQuantity = Number.isFinite(parsedStock) ? parsedStock : 0;
-
-  const minStockRaw = product.minStock ?? 0;
-  const parsedMinStock = Number(minStockRaw);
-  const minStock = Number.isFinite(parsedMinStock) ? parsedMinStock : 0;
-
-  const priceRaw = product.price ?? 0;
-  const parsedPrice = Number(priceRaw);
-  const price = Number.isFinite(parsedPrice) ? parsedPrice : 0;
-
-    // Increment total products regardless of whether optional fields are present
-    acc.totalProducts += 1;
-
-    const hasThreshold = minStock > 0;
-    if (hasThreshold && stockQuantity <= minStock) {
-      acc.lowStockCount += 1;
-    }
-
-    acc.totalValue += price * stockQuantity;
-
-    return acc;
-  }, {
-    totalProducts: 0,
-    lowStockCount: 0,
-    totalValue: 0
-  }) || { totalProducts: 0, lowStockCount: 0, totalValue: 0 };
-
-  const totalProducts = stats.totalProducts;
-  const lowStockProducts = stats.lowStockCount;
-  const totalValue = stats.totalValue.toFixed(2);
+  const totalProducts = inventorySummary.totalProducts;
+  const lowStockProducts = inventorySummary.lowStockCount;
+  const formattedInventoryValue = Number(inventorySummary.totalInventoryValue || 0).toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -236,12 +238,7 @@ const InventoryPage = () => {
                 </div>
                 <div className="ml-4">
                   <p className="text-sm font-medium text-green-900">Total Inventory Value</p>
-                  <p className="text-2xl font-bold text-green-600">
-                    GH₵{Number(totalValue).toLocaleString(undefined, {
-                      minimumFractionDigits: 2,
-                      maximumFractionDigits: 2
-                    })}
-                  </p>
+                  <p className="text-2xl font-bold text-green-600">GH₵{formattedInventoryValue}</p>
                   <p className="text-xs text-gray-500 mt-1">Current stock value</p>
                 </div>
               </div>

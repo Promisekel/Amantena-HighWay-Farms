@@ -226,15 +226,26 @@ export const logOut = async () => {
 // Product-related Firestore functions
 export const addProduct = async (productData) => {
   try {
-    const docRef = await addDoc(collection(db, 'products'), {
+    const stockQuantity = Number(productData.stockQuantity ?? productData.currentStock ?? 0) || 0;
+    const price = Number(productData.price) || 0;
+    const sanitizedData = {
       ...productData,
+      price,
+      stockQuantity,
+      currentStock: stockQuantity,
+      inventoryValue: price * Math.max(stockQuantity, 0),
       createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp()
+      updatedAt: serverTimestamp(),
+      lastUpdated: serverTimestamp()
+    };
+
+    const docRef = await addDoc(collection(db, 'products'), {
+      ...sanitizedData
     });
 
     // create initial stock history entry
     try {
-      const initialQty = Number(productData.stockQuantity ?? productData.currentStock ?? 0);
+      const initialQty = Number(sanitizedData.stockQuantity ?? sanitizedData.currentStock ?? 0);
       const historyRef = doc(collection(db, `products/${docRef.id}/stockHistory`));
       await setDoc(historyRef, {
         previousQty: 0,
@@ -259,24 +270,44 @@ export const addProduct = async (productData) => {
 export const updateProduct = async (productId, productData) => {
   try {
     const productRef = doc(db, 'products', productId);
-    // If stock fields are being changed, do it in a transaction and record history
-    const incomingStock = productData.stockQuantity ?? productData.currentStock ?? undefined;
+    const incomingStockValue = productData?.stockQuantity ?? productData?.currentStock;
+    const hasStockUpdate = incomingStockValue !== undefined && !Number.isNaN(Number(incomingStockValue));
+    const stockReason = productData?.stockReason;
+    const priceOverride = productData?.price;
 
-    if (typeof incomingStock === 'number') {
+    const sanitizedData = {
+      ...productData
+    };
+    delete sanitizedData.stockQuantity;
+    delete sanitizedData.currentStock;
+    delete sanitizedData.stockReason;
+    delete sanitizedData.price;
+    delete sanitizedData.inventoryValue;
+    delete sanitizedData.lastUpdated;
+    delete sanitizedData.updatedAt;
+    delete sanitizedData.stockTrend;
+
+    if (hasStockUpdate) {
+      const incomingStock = Number(incomingStockValue);
+
       await runTransaction(db, async (transaction) => {
         const prodSnap = await transaction.get(productRef);
         if (!prodSnap.exists()) throw new Error('Product not found');
 
-        const existing = prodSnap.data();
-        const previousQty = Number(existing.stockQuantity ?? existing.currentStock ?? 0);
-        const newQty = Number(incomingStock);
+        const existing = prodSnap.data() || {};
+        const previousQty = Number(existing.stockQuantity ?? existing.currentStock ?? 0) || 0;
+        const newQty = Number.isFinite(incomingStock) ? incomingStock : previousQty;
+        const price = priceOverride !== undefined ? (Number(priceOverride) || 0) : (Number(existing.price) || 0);
         const delta = newQty - previousQty;
 
         transaction.update(productRef, {
-          ...productData,
+          ...sanitizedData,
+          price,
           stockQuantity: newQty,
           currentStock: newQty,
-          updatedAt: serverTimestamp()
+          inventoryValue: price * Math.max(newQty, 0),
+          updatedAt: serverTimestamp(),
+          lastUpdated: serverTimestamp()
         });
 
         const historyRef = doc(collection(db, `products/${productId}/stockHistory`));
@@ -284,16 +315,26 @@ export const updateProduct = async (productId, productData) => {
           previousQty,
           newQty,
           delta,
-          reason: productData.stockReason || 'Manual update',
+          reason: stockReason || 'Manual update',
           userId: productData.updatedBy || 'system',
           userEmail: productData.updatedByEmail || null,
           timestamp: serverTimestamp()
         });
       });
     } else {
+      const prodSnap = await getDoc(productRef);
+      if (!prodSnap.exists()) throw new Error('Product not found');
+      const existing = prodSnap.data() || {};
+
+      const price = priceOverride !== undefined ? (Number(priceOverride) || 0) : (Number(existing.price) || 0);
+      const stockQty = Number(existing.stockQuantity ?? existing.currentStock ?? 0) || 0;
+
       await updateDoc(productRef, {
-        ...productData,
-        updatedAt: serverTimestamp()
+        ...sanitizedData,
+        price,
+        inventoryValue: price * Math.max(stockQty, 0),
+        updatedAt: serverTimestamp(),
+        lastUpdated: serverTimestamp()
       });
     }
   } catch (error) {
@@ -316,12 +357,29 @@ export const getAllProducts = async () => {
     const q = query(collection(db, 'products'), orderBy('createdAt', 'desc'));
     const querySnapshot = await getDocs(q);
     
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-      createdAt: doc.data().createdAt?.toDate()?.toISOString(),
-      updatedAt: doc.data().updatedAt?.toDate()?.toISOString()
-    }));
+    return querySnapshot.docs.map((docSnapshot) => {
+      const data = docSnapshot.data() || {};
+      const stockQuantity = Number(data.stockQuantity ?? data.currentStock ?? data.quantity ?? 0) || 0;
+      const price = Number(data.price) || 0;
+      const inventoryValue = price * Math.max(stockQuantity, 0);
+      const minStock = Number(data.minStock) || 0;
+      const maxStock = Number(data.maxStock) || 0;
+      const createdAtDate = data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt;
+      const updatedAtDate = data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt;
+
+      return {
+        id: docSnapshot.id,
+        ...data,
+        price,
+        stockQuantity,
+        currentStock: stockQuantity,
+        inventoryValue,
+        minStock,
+        maxStock,
+        createdAt: createdAtDate ? (createdAtDate.toISOString?.() || createdAtDate) : null,
+        updatedAt: updatedAtDate ? (updatedAtDate.toISOString?.() || updatedAtDate) : null
+      };
+    });
   } catch (error) {
     console.error('Error getting products:', error);
     throw error;
@@ -332,11 +390,22 @@ export const getProduct = async (productId) => {
   try {
     const productDoc = await getDoc(doc(db, 'products', productId));
     if (productDoc.exists()) {
+      const data = productDoc.data() || {};
+      const stockQuantity = Number(data.stockQuantity ?? data.currentStock ?? data.quantity ?? 0) || 0;
+      const price = Number(data.price) || 0;
+      const inventoryValue = price * Math.max(stockQuantity, 0);
+      const createdAtDate = data.createdAt?.toDate ? data.createdAt.toDate() : data.createdAt;
+      const updatedAtDate = data.updatedAt?.toDate ? data.updatedAt.toDate() : data.updatedAt;
+
       return {
         id: productDoc.id,
-        ...productDoc.data(),
-        createdAt: productDoc.data().createdAt?.toDate()?.toISOString(),
-        updatedAt: productDoc.data().updatedAt?.toDate()?.toISOString()
+        ...data,
+        price,
+        stockQuantity,
+        currentStock: stockQuantity,
+        inventoryValue,
+        createdAt: createdAtDate ? (createdAtDate.toISOString?.() || createdAtDate) : null,
+        updatedAt: updatedAtDate ? (updatedAtDate.toISOString?.() || updatedAtDate) : null
       };
     }
     return null;
@@ -402,11 +471,14 @@ export const addStockMovement = async (movementData) => {
         const previousQty = Number(existing.stockQuantity ?? existing.currentStock ?? 0);
         const newQty = type === 'in' ? previousQty + qty : Math.max(0, previousQty - qty);
         const delta = newQty - previousQty;
+        const price = Number(existing.price) || 0;
 
         transaction.update(productRef, {
           stockQuantity: newQty,
           currentStock: newQty,
+          inventoryValue: price * Math.max(newQty, 0),
           lastUpdated: serverTimestamp(),
+          updatedAt: serverTimestamp(),
           stockTrend: (previousQty === 0) ? 0 : ((newQty - previousQty) / (previousQty || 1)) * 100
         });
 
