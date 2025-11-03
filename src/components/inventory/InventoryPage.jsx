@@ -130,21 +130,36 @@ const InventoryPage = () => {
 
   // Calculate statistics with improved accuracy
   const stats = products?.reduce((acc, product) => {
-    // Count valid products
-    if (product?.type && product?.name && typeof product.stockQuantity === 'number') {
-      acc.totalProducts++;
-      
-      // Check for low stock (stockQuantity <= minStock)
-      const stockQuantity = parseInt(product.stockQuantity) || 0;
-      const minStock = parseInt(product.minStock) || 0;
-      if (stockQuantity <= minStock) {
-        acc.lowStockCount++;
-      }
-
-      // Calculate total inventory value (price * current stock)
-      const price = parseFloat(product.price) || 0;
-      acc.totalValue += (price * stockQuantity);
+    if (!product || !product.name) {
+      return acc;
     }
+
+    const status = (product.status || '').toLowerCase();
+    if (status === 'archived' || status === 'inactive') {
+      return acc;
+    }
+
+  const stockQuantityRaw = product.stockQuantity ?? product.currentStock ?? product.quantity ?? 0;
+  const parsedStock = Number(stockQuantityRaw);
+  const stockQuantity = Number.isFinite(parsedStock) ? parsedStock : 0;
+
+  const minStockRaw = product.minStock ?? 0;
+  const parsedMinStock = Number(minStockRaw);
+  const minStock = Number.isFinite(parsedMinStock) ? parsedMinStock : 0;
+
+  const priceRaw = product.price ?? 0;
+  const parsedPrice = Number(priceRaw);
+  const price = Number.isFinite(parsedPrice) ? parsedPrice : 0;
+
+    // Increment total products regardless of whether optional fields are present
+    acc.totalProducts += 1;
+
+    const hasThreshold = minStock > 0;
+    if (hasThreshold && stockQuantity <= minStock) {
+      acc.lowStockCount += 1;
+    }
+
+    acc.totalValue += price * stockQuantity;
 
     return acc;
   }, {
