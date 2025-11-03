@@ -4,15 +4,15 @@ import maizeImage from '../../Placeholders/Maize (Ungrinded).jpg';
 import pkcCopraImage from '../../Placeholders/PKC_Copra.avif';
 import wheatBranImage from '../../Placeholders/Wheat Bran (25 kg).jpeg';
 import riceBranImage from '../../Placeholders/Rice Bran (50 kg).webp';
-import meatBoneImage from '../../Placeholders/Meat & Bone (60% Protein).webp';
+import meatBoneImage from '../../Placeholders/Meat & Bone (60% Protein).png';
 import farmwaySoyaImage from '../../Placeholders/Farmway Soya.jpg';
 import eggCrateImage from '../../Placeholders/Egg Crate (Small, Medium, Large).jpeg';
 import additechConcentrateImage from '../../Placeholders/Additech Layer Concentrate.png';
 import champrixConcentrateImage from '../../Placeholders/Champrix Concentrate (Layer 5%, Intraco Layer 5%).jpg';
 import koudjisProductsImage from '../../Placeholders/Koudjis Products.webp';
-import layerConcentrateImage from '../../Placeholders/Layer Concentrate (KLC 5%, KLC 25%).webp';
+import layerConcentrateImage from '../../Placeholders/Layer Concentrate (KLC 5%, KLC 25%).png';
 import broilerConcentrateImage from '../../Placeholders/Broiler Concentrate (All Variants).jpg';
-import fishMealImage from '../../Placeholders/Fish Meal (Local “One Man Thousand”).avif';
+import fishMealImage from '../../Placeholders/Fish Meal (Local “One Man Thousand”).png';
 
 const defaultPlaceholder = feedImage;
 
