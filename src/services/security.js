@@ -6,16 +6,26 @@ import {
   PhoneAuthProvider,
   PhoneMultiFactorGenerator
 } from 'firebase/auth';
-import { doc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  doc,
+  setDoc,
+  updateDoc,
+  serverTimestamp,
+  collection,
+  arrayUnion,
+  arrayRemove
+} from 'firebase/firestore';
 import { auth, db } from './firebase';
 
 // Session management
 let sessionTimeout;
-let activityTimeout;
 let lastActivity = Date.now();
+let securitySettings = { autoLogout: 0 };
 
 // Initialize security features
-export const initializeSecurity = (settings) => {
+export const initializeSecurity = (settings = {}) => {
+  securitySettings = settings;
+
   // Set up activity monitoring
   document.addEventListener('mousemove', updateActivity);
   document.addEventListener('keypress', updateActivity);
@@ -23,8 +33,8 @@ export const initializeSecurity = (settings) => {
   document.addEventListener('scroll', updateActivity);
 
   // Start session timer
-  if (settings.autoLogout > 0) {
-    startAutoLogoutTimer(settings.autoLogout);
+  if (securitySettings.autoLogout > 0) {
+    startAutoLogoutTimer(securitySettings.autoLogout);
   }
 };
 
@@ -35,7 +45,10 @@ const updateActivity = () => {
   // Reset auto-logout timer
   if (sessionTimeout) {
     clearTimeout(sessionTimeout);
-    startAutoLogoutTimer(settings.autoLogout);
+    const autoLogoutMinutes = securitySettings?.autoLogout;
+    if (autoLogoutMinutes > 0) {
+      startAutoLogoutTimer(autoLogoutMinutes);
+    }
   }
 };
 
@@ -57,7 +70,7 @@ export const startAutoLogoutTimer = (minutes) => {
 const handleAutoLogout = async () => {
   try {
     // Log the auto-logout event
-    await setDoc(doc(collection(db, 'audit-logs')), {
+  await setDoc(doc(collection(db, 'audit-logs')), {
       action: 'auto_logout',
       userId: auth.currentUser?.uid,
       timestamp: serverTimestamp(),
@@ -192,7 +205,7 @@ export const checkIpWhitelist = async (ipAddress, settings) => {
 // Add IP to whitelist
 export const addToIpWhitelist = async (ipAddress) => {
   try {
-    const settingsRef = doc(db, 'settings', 'app-settings');
+  const settingsRef = doc(db, 'settings', 'app-settings');
     await updateDoc(settingsRef, {
       ipWhitelist: arrayUnion(ipAddress),
       lastUpdated: serverTimestamp()

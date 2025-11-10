@@ -1,1 +1,3 @@
-export default Reports;
+const ReportsTemp = () => null;
+
+export default ReportsTemp;

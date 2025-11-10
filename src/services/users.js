@@ -16,7 +16,6 @@ import {
   serverTimestamp
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
-import toast from 'react-hot-toast';
 
 // Create a new user
 export const createUser = async (userData) => {

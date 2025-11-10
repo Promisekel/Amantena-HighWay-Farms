@@ -1,4 +1,13 @@
-import { doc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import React from 'react';
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  query,
+  where,
+  getDocs,
+  writeBatch
+} from 'firebase/firestore';
 import { db, auth } from './firebase';
 import toast from 'react-hot-toast';
 
@@ -162,7 +171,6 @@ class ErrorHandler {
   // Log error to Firestore
   async logError(errorInfo) {
     try {
-      const errorLogRef = doc(collection(db, 'error-logs'));
       await addDoc(collection(db, 'error-logs'), {
         ...errorInfo,
         userAgent: navigator.userAgent,

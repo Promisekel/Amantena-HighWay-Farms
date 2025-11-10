@@ -1,31 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { 
+import {
   AlertCircle,
-  BarChart3,
-  Calendar,
-  Check,
-  Cloud,
-  Clock,
-  CreditCard,
   Database,
   Download,
-  Globe,
-  HardDrive,
-  Lock,
   Mail,
-  MapPin,
-  Moon,
-  Palette,
   Plus,
   RefreshCw,
   Save,
   Settings as SettingsIcon,
   Shield,
-  Sun,
   Trash2,
-  TrendingUp,
-  Upload,
-  User
+  Upload
 } from 'lucide-react';
 import {
   doc,
@@ -34,7 +19,6 @@ import {
   updateDoc,
   collection,
   getDocs,
-  addDoc,
   serverTimestamp,
   writeBatch,
   onSnapshot
@@ -94,6 +78,64 @@ const Settings = () => {
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef(null);
   const unauthorizedNotifiedRef = useRef(false);
+
+  const loadSettingsAndUsers = useCallback(async () => {
+    try {
+      setLoading(true);
+
+      const appSettingsRef = doc(db, 'settings', 'app-settings');
+      const settingsDoc = await getDoc(appSettingsRef);
+      if (settingsDoc.exists()) {
+        const firestoreSettings = settingsDoc.data();
+        let authorizedEmails = normalizeEmailList(firestoreSettings.authorizedEmails);
+
+        if (authorizedEmails.length === 0) {
+          authorizedEmails = normalizeEmailList([
+            ...DEFAULT_AUTHORIZED_EMAILS,
+            ...(currentUser?.email ? [currentUser.email] : [])
+          ]);
+          if (authorizedEmails.length > 0) {
+            await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
+          }
+        } else if (
+          Array.isArray(firestoreSettings.authorizedEmails) &&
+          firestoreSettings.authorizedEmails.length !== authorizedEmails.length
+        ) {
+          await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
+        }
+
+        setSettings(prev => {
+          const updated = {
+            ...prev,
+            ...firestoreSettings,
+            authorizedEmails
+          };
+          localStorage.setItem('farmSettings', JSON.stringify(updated));
+          return updated;
+        });
+      } else {
+        const fallbackEmails = normalizeEmailList([
+          ...DEFAULT_AUTHORIZED_EMAILS,
+          ...(currentUser?.email ? [currentUser.email] : [])
+        ]);
+
+        const defaultSettings = {
+          ...INITIAL_SETTINGS,
+          authorizedEmails: fallbackEmails,
+          autoLogout: 30
+        };
+
+        await setDoc(appSettingsRef, defaultSettings);
+        setSettings(defaultSettings);
+        localStorage.setItem('farmSettings', JSON.stringify(defaultSettings));
+      }
+    } catch (error) {
+      console.error('Error loading settings:', error);
+      toast.error('Failed to load settings');
+    } finally {
+      setLoading(false);
+    }
+  }, [currentUser?.email]);
 
   // Function to parse CSV
   const parseCSV = (text) => {
@@ -566,64 +608,6 @@ const Settings = () => {
       settingsUnsubscribe();
     };
   }, [currentUser?.email, loadSettingsAndUsers]);
-
-  const loadSettingsAndUsers = useCallback(async () => {
-    try {
-      setLoading(true);
-
-      const appSettingsRef = doc(db, 'settings', 'app-settings');
-      const settingsDoc = await getDoc(appSettingsRef);
-      if (settingsDoc.exists()) {
-        const firestoreSettings = settingsDoc.data();
-        let authorizedEmails = normalizeEmailList(firestoreSettings.authorizedEmails);
-
-        if (authorizedEmails.length === 0) {
-          authorizedEmails = normalizeEmailList([
-            ...DEFAULT_AUTHORIZED_EMAILS,
-            ...(currentUser?.email ? [currentUser.email] : [])
-          ]);
-          if (authorizedEmails.length > 0) {
-            await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
-          }
-        } else if (
-          Array.isArray(firestoreSettings.authorizedEmails) &&
-          firestoreSettings.authorizedEmails.length !== authorizedEmails.length
-        ) {
-          await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
-        }
-
-        setSettings(prev => {
-          const updated = {
-            ...prev,
-            ...firestoreSettings,
-            authorizedEmails
-          };
-          localStorage.setItem('farmSettings', JSON.stringify(updated));
-          return updated;
-        });
-      } else {
-        const fallbackEmails = normalizeEmailList([
-          ...DEFAULT_AUTHORIZED_EMAILS,
-          ...(currentUser?.email ? [currentUser.email] : [])
-        ]);
-
-        const defaultSettings = {
-          ...INITIAL_SETTINGS,
-          authorizedEmails: fallbackEmails,
-          autoLogout: 30
-        };
-
-        await setDoc(appSettingsRef, defaultSettings);
-        setSettings(defaultSettings);
-        localStorage.setItem('farmSettings', JSON.stringify(defaultSettings));
-      }
-    } catch (error) {
-      console.error('Error loading settings:', error);
-      toast.error('Failed to load settings');
-    } finally {
-      setLoading(false);
-    }
-  }, [currentUser?.email]);
 
   useEffect(() => {
     if (!currentUser?.email || !Array.isArray(settings.authorizedEmails)) {

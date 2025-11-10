@@ -5,7 +5,6 @@ import {
   addDoc, 
   collection, 
   getDoc, 
-  runTransaction,
   serverTimestamp,
   query,
   where,
@@ -327,7 +326,7 @@ export const bulkUpdateStock = async (updates) => {
     const timestamp = serverTimestamp();
     
     for (const update of updates) {
-      const { productId, newStockLevel, reason = 'bulk_update' } = update;
+  const { productId, newStockLevel } = update;
       const productRef = doc(db, 'products', productId);
       
       // Get current data for stock trend calculation
