@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -6,7 +6,6 @@ import {
   Package, 
   Users, 
   DollarSign, 
-  Calendar, 
   Download,
   RefreshCw,
   BarChart3,
@@ -46,36 +45,9 @@ const Reports = () => {
     revenueTrend: 0
   });
 
-  // Effect to load initial data and set up listeners
-  useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        // Set up real-time listeners
-        const unsubscribe = setupRealTimeListeners();
-        
-        // Initial data fetch
-        const [sales, products] = await Promise.all([
-          fetchSalesData(),
-          fetchProductsData()
-        ]);
-        
-        // Calculate initial analytics
-        if (sales && products) {
-          calculateAnalytics(sales, products);
-        }
-      } catch (error) {
-        console.error('Error loading reports data:', error);
-        toast.error('Failed to load reports data');
-      } finally {
-        setLoading(false);
-      }
-    };
+  const salesRef = useRef([]);
 
-    loadData();
-  }, [dateRange]);
-
-  const fetchSalesData = async () => {
+  const fetchSalesData = useCallback(async () => {
     try {
       const salesRef = collection(db, 'sales');
       let salesQuery;
@@ -103,15 +75,16 @@ const Reports = () => {
         });
       });
       
+      salesRef.current = sales;
       setSalesData(sales);
       return sales;
     } catch (error) {
       console.error('Error fetching sales data:', error);
       return [];
     }
-  };
+  }, [dateRange]);
 
-  const fetchProductsData = async () => {
+  const fetchProductsData = useCallback(async () => {
     try {
       const snapshot = await getDocs(query(collection(db, 'products')));
       const products = [];
@@ -132,62 +105,9 @@ const Reports = () => {
       console.error('Error fetching products data:', error);
       return [];
     }
-  };
+  }, []);
 
-  const setupRealTimeListeners = () => {
-    // Set up sales listener
-    const salesUnsubscribe = onSnapshot(
-      query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(100)),
-      snapshot => {
-        const sales = [];
-        snapshot.forEach(doc => {
-          const data = doc.data();
-          sales.push({
-            id: doc.id,
-            ...data,
-            timestamp: data.timestamp?.toDate() || new Date()
-          });
-        });
-        setSalesData(sales);
-        calculateAnalytics(sales, productsData);
-      },
-      error => {
-        console.error('Sales listener error:', error);
-        toast.error('Error listening to sales updates');
-      }
-    );
-
-    // Set up products listener
-    const productsUnsubscribe = onSnapshot(
-      query(collection(db, 'products')),
-      snapshot => {
-        const products = [];
-        snapshot.forEach(doc => {
-          const data = doc.data();
-          if (!data.status || data.status !== 'archived') {
-            products.push({
-              id: doc.id,
-              ...data,
-              price: parseFloat(data.price) || 0
-            });
-          }
-        });
-        setProductsData(products);
-        calculateAnalytics(salesData, products);
-      },
-      error => {
-        console.error('Products listener error:', error);
-        toast.error('Error listening to product updates');
-      }
-    );
-
-    return () => {
-      salesUnsubscribe();
-      productsUnsubscribe();
-    };
-  };
-
-  const calculateAnalytics = (sales, products) => {
+  const calculateAnalytics = useCallback((sales) => {
     if (!Array.isArray(sales)) return;
 
     try {
@@ -269,16 +189,108 @@ const Reports = () => {
       console.error('Error calculating analytics:', error);
       toast.error('Error updating analytics');
     }
-  };
+  }, [dateRange]);
+
+  const setupRealTimeListeners = useCallback(() => {
+    const salesUnsubscribe = onSnapshot(
+      query(collection(db, 'sales'), orderBy('timestamp', 'desc'), limit(100)),
+      snapshot => {
+        const sales = [];
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          sales.push({
+            id: doc.id,
+            ...data,
+            timestamp: data.timestamp?.toDate() || new Date()
+          });
+        });
+
+        salesRef.current = sales;
+        setSalesData(sales);
+        calculateAnalytics(sales);
+      },
+      error => {
+        console.error('Sales listener error:', error);
+        toast.error('Error listening to sales updates');
+      }
+    );
+
+    const productsUnsubscribe = onSnapshot(
+      query(collection(db, 'products')),
+      snapshot => {
+        const products = [];
+        snapshot.forEach(doc => {
+          const data = doc.data();
+          if (!data.status || data.status !== 'archived') {
+            products.push({
+              id: doc.id,
+              ...data,
+              price: parseFloat(data.price) || 0
+            });
+          }
+        });
+
+        setProductsData(products);
+        calculateAnalytics(salesRef.current);
+      },
+      error => {
+        console.error('Products listener error:', error);
+        toast.error('Error listening to product updates');
+      }
+    );
+
+    return () => {
+      salesUnsubscribe();
+      productsUnsubscribe();
+    };
+  }, [calculateAnalytics]);
+
+  // Effect to load initial data and set up listeners
+  useEffect(() => {
+    let cleanupListeners = () => {};
+
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        cleanupListeners = setupRealTimeListeners();
+
+        const [sales] = await Promise.all([
+          fetchSalesData(),
+          fetchProductsData()
+        ]);
+
+        if (sales) {
+          calculateAnalytics(sales);
+        }
+      } catch (error) {
+        console.error('Error loading reports data:', error);
+        toast.error('Failed to load reports data');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadData();
+
+    return () => {
+      cleanupListeners();
+    };
+  }, [
+    dateRange,
+    setupRealTimeListeners,
+    fetchSalesData,
+    fetchProductsData,
+    calculateAnalytics
+  ]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      const [sales, products] = await Promise.all([
+      const [sales] = await Promise.all([
         fetchSalesData(),
         fetchProductsData()
       ]);
-      calculateAnalytics(sales, products);
+      calculateAnalytics(sales);
       toast.success('Reports refreshed successfully');
     } catch (error) {
       console.error('Error refreshing data:', error);

@@ -1,7 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
-  TrendingUp, 
-  TrendingDown, 
   Package, 
   ShoppingCart, 
   DollarSign,
@@ -11,7 +9,6 @@ import {
   ArrowUpRight,
   ArrowDownRight,
   RefreshCw,
-  Activity,
   Target,
   Zap
 } from 'lucide-react';
@@ -32,8 +29,6 @@ import { getProductTypeLabel } from '../inventory/productTypes';
 const Dashboard = () => {
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [salesData, setSalesData] = useState([]);
-  const [productsData, setProductsData] = useState([]);
   const [dashboardStats, setDashboardStats] = useState({
     todaySales: 0,
     totalRevenue: 0,
@@ -45,51 +40,16 @@ const Dashboard = () => {
     topProducts: []
   });
 
+  const salesRef = useRef([]);
+  const productsRef = useRef([]);
+
   // Update current time every minute
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
     return () => clearInterval(timer);
   }, []);
 
-  // Set up real-time data listeners
-  useEffect(() => {
-    const setupListeners = () => {
-      // Products listener
-      const productsQuery = query(collection(db, 'products'));
-      const productsUnsubscribe = onSnapshot(productsQuery, (snapshot) => {
-        const products = snapshot.docs
-          .map((docSnapshot) => normaliseProductRecord({ id: docSnapshot.id, ...docSnapshot.data() }))
-          .filter((product) => product.status !== 'archived');
-        setProductsData(products);
-        calculateStats(salesData, products);
-      });
-
-      // Sales listener - last 30 days for trend analysis
-      const thirtyDaysAgo = startOfDay(subDays(new Date(), 30));
-      const salesQuery = query(
-        collection(db, 'sales'),
-        where('timestamp', '>=', Timestamp.fromDate(thirtyDaysAgo)),
-        orderBy('timestamp', 'desc'),
-        limit(100)
-      );
-      
-      const salesUnsubscribe = onSnapshot(salesQuery, (snapshot) => {
-        const sales = snapshot.docs.map((docSnapshot) => normaliseSaleRecord({ id: docSnapshot.id, ...docSnapshot.data() }));
-        setSalesData(sales);
-        calculateStats(sales, productsData);
-        setLoading(false);
-      });
-
-      return () => {
-        productsUnsubscribe();
-        salesUnsubscribe();
-      };
-    };
-
-    return setupListeners();
-  }, []);
-
-  const calculateStats = (sales, products) => {
+  const updateStats = useCallback((sales, products) => {
     const productIndex = new Map(products.map((product) => [product.id, product]));
 
     const todaySales = sales.filter((sale) => isToday(sale.timestamp));
@@ -173,7 +133,41 @@ const Dashboard = () => {
       recentSales,
       topProducts
     });
-  };
+  }, []);
+
+  // Set up real-time data listeners
+  useEffect(() => {
+    // Products listener
+    const productsQuery = query(collection(db, 'products'));
+    const productsUnsubscribe = onSnapshot(productsQuery, (snapshot) => {
+      const products = snapshot.docs
+        .map((docSnapshot) => normaliseProductRecord({ id: docSnapshot.id, ...docSnapshot.data() }))
+        .filter((product) => product.status !== 'archived');
+      productsRef.current = products;
+      updateStats(salesRef.current, products);
+    });
+
+    // Sales listener - last 30 days for trend analysis
+    const thirtyDaysAgo = startOfDay(subDays(new Date(), 30));
+    const salesQuery = query(
+      collection(db, 'sales'),
+      where('timestamp', '>=', Timestamp.fromDate(thirtyDaysAgo)),
+      orderBy('timestamp', 'desc'),
+      limit(100)
+    );
+    
+    const salesUnsubscribe = onSnapshot(salesQuery, (snapshot) => {
+      const sales = snapshot.docs.map((docSnapshot) => normaliseSaleRecord({ id: docSnapshot.id, ...docSnapshot.data() }));
+      salesRef.current = sales;
+      updateStats(sales, productsRef.current);
+      setLoading(false);
+    });
+
+    return () => {
+      productsUnsubscribe();
+      salesUnsubscribe();
+    };
+  }, [updateStats]);
 
   const formatCurrency = (amount) => {
     return `GH₵${Number(amount || 0).toLocaleString(undefined, {

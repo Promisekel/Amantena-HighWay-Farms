@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Plus, Eye } from 'lucide-react';
 import { mockSales } from '../../data/mockData';
+import toast from 'react-hot-toast';
 
 const Sales = () => {
-    const [showAddModal, setShowAddModal] = useState(false);
+    const handleRecordSaleClick = () => {
+        toast('Sale recording flow coming soon');
+    };
     
     return (
         <div className="animate-fade-in">
@@ -13,7 +16,7 @@ const Sales = () => {
                     <p className="text-gray-600">Track and manage your daily sales transactions</p>
                 </div>
                 <button 
-                    onClick={() => setShowAddModal(true)}
+                    onClick={handleRecordSaleClick}
                     className="mt-4 md:mt-0 gradient-primary text-white px-6 py-3 rounded-xl font-medium hover:opacity-90 transition-opacity flex items-center space-x-2"
                 >
                     <Plus className="h-5 w-5" />
