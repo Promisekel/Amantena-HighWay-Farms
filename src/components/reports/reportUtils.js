@@ -88,18 +88,18 @@ export const normaliseSaleRecord = (raw) => {
   const unitPrice = Number(raw.unitPrice ?? raw.pricePerUnit ?? raw.price ?? 0) || 0;
   const providedTotal = Number(raw.total ?? raw.totalAmount ?? raw.amount ?? 0) || 0;
   const calculatedTotal = quantity * unitPrice;
-  const verifiedTotal = providedTotal > 0 ? providedTotal : calculatedTotal;
+  const finalTotal = providedTotal > 0 ? providedTotal : calculatedTotal;
+  const customerName = (raw.customer || raw.customerName || '').trim();
 
   return {
     id: raw.id || raw.saleId || null,
     productId: raw.productId || raw.productRef || null,
     productName: raw.productName || raw.name || raw.product || 'Unknown Product',
-    customer: (raw.customer || raw.customerName || '').trim() || 'Unknown',
+    customer: customerName || 'N/A',
     quantity,
     unitPrice,
-    verifiedTotal,
     price: unitPrice,
-    total: verifiedTotal,
+    total: finalTotal,
     timestamp,
     raw
   };
@@ -179,14 +179,14 @@ export const computeAnalytics = (sales, products, rangeInfo) => {
   const { currentSales, previousSales } = splitSalesByRange(sales, rangeInfo);
 
   const totalSales = currentSales.length;
-  const totalRevenue = sumBy(currentSales, (sale) => sale.verifiedTotal);
+  const totalRevenue = sumBy(currentSales, (sale) => sale.total);
   const totalQuantitySold = sumBy(currentSales, (sale) => sale.quantity);
-  const highestSingleSale = currentSales.reduce((max, sale) => Math.max(max, sale.verifiedTotal), 0);
+  const highestSingleSale = currentSales.reduce((max, sale) => Math.max(max, sale.total), 0);
 
   const uniqueCustomers = new Set(
     currentSales
       .map((sale) => sale.customer)
-      .filter((customer) => customer && customer !== 'Unknown')
+      .filter((customer) => customer && customer !== 'Unknown' && customer !== 'N/A')
   ).size;
 
   const avgOrderValue = totalSales > 0 ? totalRevenue / totalSales : 0;
@@ -197,7 +197,7 @@ export const computeAnalytics = (sales, products, rangeInfo) => {
     : 0;
 
   const revenueTrend = rangeInfo.mode === 'range'
-    ? calculateTrend(totalRevenue, sumBy(previousSales, (sale) => sale.verifiedTotal))
+  ? calculateTrend(totalRevenue, sumBy(previousSales, (sale) => sale.total))
     : 0;
 
   const productIndexById = new Map();
@@ -230,7 +230,7 @@ export const computeAnalytics = (sales, products, rangeInfo) => {
       lastSaleAt: sale.timestamp
     };
 
-    entry.revenue += sale.verifiedTotal;
+  entry.revenue += sale.total;
     entry.quantity += sale.quantity;
     entry.transactions += 1;
     entry.lastUnitPrice = sale.unitPrice;
@@ -267,7 +267,7 @@ export const computeAnalytics = (sales, products, rangeInfo) => {
       customer: sale.customer,
       quantity: sale.quantity,
       unitPrice: sale.unitPrice,
-      total: sale.verifiedTotal,
+      total: sale.total,
       timestamp: sale.timestamp
     }));
 

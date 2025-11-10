@@ -18,7 +18,6 @@ const createEmptyItem = () => ({
   productName: '',
   productType: '',
   typeLabel: '',
-  customer: '',
   price: 0,
   quantity: 1,
   total: 0,
@@ -77,9 +76,9 @@ const SalesModal = ({ isOpen, onClose }) => {
         productName: selectedProduct.name,
         productType: selectedProduct.type,
         typeLabel: getProductTypeLabel(selectedProduct.type),
-        price: selectedProduct.price || 0,
+        price: Number(selectedProduct.price) || 0,
         quantity: adjustedQuantity,
-        total: (selectedProduct.price || 0) * adjustedQuantity,
+        total: (Number(selectedProduct.price) || 0) * adjustedQuantity,
         maxStock: selectedProduct.stockQuantity
       };
 
@@ -112,21 +111,15 @@ const SalesModal = ({ isOpen, onClose }) => {
         safeQuantity = selectedProduct.stockQuantity;
       }
 
+      const unitPrice = Number(targetItem.price) || 0;
+
       nextItems[index] = {
         ...targetItem,
         quantity: safeQuantity,
-        total: (targetItem.price || 0) * safeQuantity,
+        total: unitPrice * safeQuantity,
         maxStock: selectedProduct.stockQuantity
       };
 
-      return nextItems;
-    });
-  };
-
-  const handleCustomerChange = (index, customer) => {
-    setItems((prevItems) => {
-      const nextItems = [...prevItems];
-      nextItems[index] = { ...nextItems[index], customer };
       return nextItems;
     });
   };
@@ -139,9 +132,8 @@ const SalesModal = ({ isOpen, onClose }) => {
     setItems((prevItems) => (prevItems.length > 1 ? prevItems.filter((_, i) => i !== index) : prevItems));
   };
 
-  const calculateGrandTotal = () => {
-    return items.reduce((sum, item) => sum + (item.total || 0), 0);
-  };
+  const calculateTotals = () =>
+    items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
 
   const resetForm = () => {
     setSalesperson('');
@@ -161,10 +153,6 @@ const SalesModal = ({ isOpen, onClose }) => {
         toast.error('Please select a product for all items');
         return false;
       }
-      if (!item.customer.trim()) {
-        toast.error('Please enter customer name for all items');
-        return false;
-      }
       if (!item.quantity || item.quantity <= 0) {
         toast.error('Please enter a valid quantity for all items');
         return false;
@@ -173,7 +161,6 @@ const SalesModal = ({ isOpen, onClose }) => {
         toast.error('Please enter a valid price for all items');
         return false;
       }
-
       const product = products.find((p) => p.id === item.productId);
       if (!product) {
         toast.error('Selected product not found');
@@ -239,18 +226,18 @@ const SalesModal = ({ isOpen, onClose }) => {
         sales.forEach((saleItem) => {
           const saleRef = doc(salesCollection);
           const newStockLevel = runningStock - saleItem.quantity;
+          const baseTotal = Number(saleItem.total) || 0;
 
           batch.set(saleRef, {
             productId: product.id,
             productName: product.name,
             productType: product.type || 'UNSPECIFIED',
             product: product.name,
-            customer: saleItem.customer,
             quantity: saleItem.quantity,
             unitPrice: saleItem.price,
             price: saleItem.price,
-            total: saleItem.total,
-            verifiedTotal: saleItem.total,
+            total: baseTotal,
+            verifiedTotal: baseTotal,
             salesperson,
             timestamp,
             previousStock: runningStock,
@@ -277,6 +264,7 @@ const SalesModal = ({ isOpen, onClose }) => {
   };
 
   if (!isOpen) return null;
+  const grandTotal = calculateTotals();
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -316,9 +304,8 @@ const SalesModal = ({ isOpen, onClose }) => {
               <thead className="bg-gray-50">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Product *</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Customer *</th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Price (GH₵)</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Quantity *</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Price (GH₵)</th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total (GH₵)</th>
                   <th className="px-4 py-3" />
                 </tr>
@@ -350,11 +337,12 @@ const SalesModal = ({ isOpen, onClose }) => {
                     </td>
                     <td className="px-4 py-3">
                       <input
-                        type="text"
-                        value={item.customer}
-                        onChange={(e) => handleCustomerChange(index, e.target.value)}
+                        type="number"
+                        value={item.quantity}
+                        onChange={(e) => handleQuantityChange(index, parseInt(e.target.value, 10) || 0)}
+                        min="1"
+                        max={item.maxStock || undefined}
                         className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                        placeholder="Customer name"
                         required
                       />
                     </td>
@@ -365,17 +353,6 @@ const SalesModal = ({ isOpen, onClose }) => {
                         readOnly
                         className="w-full p-2 border border-gray-300 rounded-lg bg-gray-50"
                         step="0.01"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        value={item.quantity}
-                        onChange={(e) => handleQuantityChange(index, parseInt(e.target.value, 10) || 0)}
-                        min="1"
-                        max={item.maxStock || undefined}
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                        required
                       />
                     </td>
                     <td className="px-4 py-3">
@@ -416,8 +393,10 @@ const SalesModal = ({ isOpen, onClose }) => {
           </button>
 
           <div className="flex items-center justify-between pt-4 border-t border-gray-200">
-            <div className="text-xl font-bold text-gray-900">
-              Grand Total: GH₵{calculateGrandTotal().toFixed(2)}
+            <div>
+              <div className="text-xl font-bold text-gray-900">
+                Grand Total: GH₵{grandTotal.toFixed(2)}
+              </div>
             </div>
             <div className="flex items-center space-x-4">
               <button

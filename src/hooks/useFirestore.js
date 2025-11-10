@@ -132,7 +132,7 @@ export const useSales = () => {
         productName: saleData.productName,
         type: 'out',
         quantity: saleData.quantity,
-        reason: `Sale to ${saleData.customerName}`,
+        reason: `Sale recorded${saleData.productName ? ` - ${saleData.productName}` : ''}`,
         userId: saleData.soldBy || 'system'
       });
 

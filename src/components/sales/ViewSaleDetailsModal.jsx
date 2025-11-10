@@ -12,7 +12,9 @@ const ViewSaleDetailsModal = ({ isOpen, onClose, sale }) => {
   // Update editedSale when sale changes
   useEffect(() => {
     if (sale) {
-      setEditedSale(sale);
+      setEditedSale({
+        ...sale
+      });
     }
   }, [sale]);
 
@@ -30,14 +32,12 @@ const ViewSaleDetailsModal = ({ isOpen, onClose, sale }) => {
       const totalAmount = (editedSale.price || 0) * (editedSale.quantity || 0);
       await updateDoc(saleRef, {
         salesperson: editedSale.salesperson,
-        customer: editedSale.customer,
         product: editedSale.product,
         productName: editedSale.productName || editedSale.product,
         quantity: editedSale.quantity,
         price: editedSale.price,
         unitPrice: editedSale.price,
-        total: totalAmount,
-        verifiedTotal: totalAmount
+        total: totalAmount
       });
       toast.success('Sale updated successfully');
       onClose();
@@ -113,17 +113,6 @@ const ViewSaleDetailsModal = ({ isOpen, onClose, sale }) => {
               />
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Customer</label>
-              <input
-                type="text"
-                value={isEditing ? editedSale.customer : sale.customer}
-                onChange={(e) => setEditedSale({ ...editedSale, customer: e.target.value })}
-                className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                disabled={!isEditing}
-              />
-            </div>
-
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Price (GH₵)</label>
@@ -151,7 +140,7 @@ const ViewSaleDetailsModal = ({ isOpen, onClose, sale }) => {
               <label className="block text-sm font-medium text-gray-700 mb-1">Total Amount (GH₵)</label>
               <input
                 type="number"
-                value={(isEditing ? editedSale.price * editedSale.quantity : sale.total).toFixed(2)}
+                value={(isEditing ? (editedSale.price || 0) * (editedSale.quantity || 0) : sale.total || 0).toFixed(2)}
                 className="w-full p-2 bg-gray-50 border border-gray-300 rounded-lg"
                 disabled
               />

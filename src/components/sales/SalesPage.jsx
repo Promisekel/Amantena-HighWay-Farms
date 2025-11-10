@@ -34,7 +34,7 @@ const SalesPage = () => {
   }, []);
 
   const updateSummaryStats = (sales) => {
-    const totalSales = sales.reduce((sum, sale) => sum + (sale.verifiedTotal || sale.total || 0), 0);
+    const totalSales = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
     const totalTransactions = sales.length;
     const averageSale = totalTransactions > 0 ? totalSales / totalTransactions : 0;
 
@@ -105,8 +105,8 @@ const SalesPage = () => {
             <thead>
               <tr className="bg-gray-50">
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Product</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Unit Price</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Amount</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -116,8 +116,8 @@ const SalesPage = () => {
               {salesData.map((sale) => {
                 const productLabel = sale.productName || sale.raw?.product || 'Unknown Product';
                 const typeLabel = sale.raw?.productType ? getProductTypeLabel(sale.raw.productType) : null;
-                const unitPrice = sale.unitPrice || sale.price || (sale.quantity ? sale.verifiedTotal / sale.quantity : 0);
-                const totalAmount = sale.verifiedTotal || sale.total || unitPrice * sale.quantity;
+                const baseUnitPrice = sale.unitPrice || sale.price || (sale.quantity ? (sale.total || 0) / sale.quantity : 0);
+                const totalAmount = sale.total || baseUnitPrice * sale.quantity;
                 const saleTimestamp = sale.timestamp instanceof Date
                   ? sale.timestamp
                   : sale.timestamp?.toDate?.() ?? null;
@@ -129,8 +129,7 @@ const SalesPage = () => {
                   product: productLabel,
                   productName: productLabel,
                   productId: sale.productId,
-                  customer: sale.customer,
-                  price: unitPrice,
+                  price: baseUnitPrice,
                   quantity: sale.quantity,
                   salesperson: sale.raw?.salesperson || sale.salesperson || '',
                   total: totalAmount,
@@ -142,14 +141,14 @@ const SalesPage = () => {
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{productLabel}</div>
                       <div className="text-sm text-gray-500">
-                        {formatCurrency(unitPrice)} each{typeLabel ? ` • ${typeLabel}` : ''}
+                        {formatCurrency(baseUnitPrice)} each{typeLabel ? ` • ${typeLabel}` : ''}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {sale.customer}
+                      {sale.quantity}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {sale.quantity}
+                      {formatCurrency(baseUnitPrice)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-semibold text-emerald-600">

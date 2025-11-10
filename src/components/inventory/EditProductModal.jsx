@@ -22,14 +22,44 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     maxStock: 0,
     unit: '',
     type: productTypes[0]?.value || '',
-    imageUrl: ''
+    imageUrl: '',
+    newStock: ''
   });
 
   const handleChange = (e) => {
     const { name, value } = e.target;
-    setFormData(prev => ({
+    if (name === 'newStock') {
+      setFormData((prev) => {
+        if (value === '') {
+          return {
+            ...prev,
+            newStock: '',
+            stockQuantity: product?.stockQuantity ?? prev.stockQuantity
+          };
+        }
+
+        const parsed = Number(value);
+        if (Number.isNaN(parsed) || parsed < 0) {
+          return {
+            ...prev,
+            newStock: value
+          };
+        }
+
+        return {
+          ...prev,
+          newStock: value,
+          stockQuantity: parsed
+        };
+      });
+      return;
+    }
+
+    const numericFields = new Set(['price', 'stockQuantity', 'minStock', 'maxStock']);
+
+    setFormData((prev) => ({
       ...prev,
-      [name]: name.includes('Stock') || name === 'price' ? Number(value) : value
+      [name]: numericFields.has(name) ? Number(value) : value
     }));
   };
 
@@ -44,7 +74,8 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
         maxStock: product.maxStock,
         unit: product.unit,
         type: product.type,
-        imageUrl: product.imageUrl || getProductTypePlaceholder(product.type)
+        imageUrl: product.imageUrl || getProductTypePlaceholder(product.type),
+        newStock: ''
       });
     }
   }, [product]);
@@ -69,19 +100,27 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     setLoading(true);
 
     try {
-  const hasCustomImage = formData.imageUrl && /^https?:\/\//i.test(formData.imageUrl);
-  const imageUrl = hasCustomImage ? formData.imageUrl : null;
+      const hasCustomImage = formData.imageUrl && /^https?:\/\//i.test(formData.imageUrl);
+      const imageUrl = hasCustomImage ? formData.imageUrl : null;
+      const previousStock = Number(product.stockQuantity ?? product.currentStock ?? 0) || 0;
+      const updatedStock = Number(formData.stockQuantity ?? previousStock) || 0;
+      const stockAdjusted = updatedStock !== previousStock;
+      const stockTrendDelta = previousStock === 0
+        ? (updatedStock > 0 ? 100 : 0)
+        : ((updatedStock - previousStock) / (previousStock || 1)) * 100;
 
       // Update product in Firestore via service so stock history is recorded
+      const { newStock, ...formValues } = formData;
+
       await updateProduct(product.id, {
-        ...formData,
+        ...formValues,
   imageUrl,
         lastUpdated: new Date(),
-        stockTrend: ((formData.stockQuantity - product.stockQuantity) / (product.stockQuantity || 1)) * 100,
-        currentStock: formData.stockQuantity, // Keep for backward compatibility
+        stockTrend: stockTrendDelta,
+        currentStock: updatedStock, // Keep for backward compatibility
         updatedBy: auth.currentUser?.uid,
         updatedByEmail: auth.currentUser?.email,
-        stockReason: 'Manual update via edit form'
+        stockReason: stockAdjusted ? 'Manual stock update via edit form' : 'Manual update via edit form'
       });
 
       toast.success('Product updated successfully');
@@ -247,11 +286,12 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
                 type="number"
                 name="stockQuantity"
                 value={formData.stockQuantity}
-                onChange={handleChange}
                 min="0"
                 required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                readOnly
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-gray-100"
               />
+              <p className="mt-1 text-xs text-gray-500">Updates automatically when you enter a new stock value.</p>
             </div>
 
             {/* Min Stock */}
@@ -284,6 +324,23 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
                 required
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               />
+            </div>
+
+            {/* New Stock */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                New Stock
+              </label>
+              <input
+                type="number"
+                name="newStock"
+                value={formData.newStock}
+                onChange={handleChange}
+                min="0"
+                placeholder="Enter new stock level"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+              />
+              <p className="mt-1 text-xs text-gray-500">Leave blank to keep the current stock unchanged.</p>
             </div>
           </div>
 

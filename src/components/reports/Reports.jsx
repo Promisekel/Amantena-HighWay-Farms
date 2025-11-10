@@ -155,7 +155,7 @@ const Reports = () => {
           .map((sale) => {
             const date = format(sale.timestamp, 'yyyy-MM-dd HH:mm');
             const unitPrice = Number(sale.unitPrice || 0).toFixed(2);
-            return `${date},${sale.productName},${sale.customer},${sale.quantity},${unitPrice},${sale.verifiedTotal.toFixed(2)}`;
+            return `${date},${sale.productName},${sale.customer},${sale.quantity},${unitPrice},${sale.total.toFixed(2)}`;
           })
           .join('\n');
         filename = `sales_report_${format(new Date(), 'yyyy-MM-dd')}.csv`;
