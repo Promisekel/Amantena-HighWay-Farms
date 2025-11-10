@@ -274,17 +274,32 @@ export const updateProduct = async (productId, productData) => {
     const stockReason = productData?.stockReason;
     const priceOverride = productData?.price;
 
-    const sanitizedData = {
-      ...productData
+    const skipKeys = new Set([
+      'stockQuantity',
+      'currentStock',
+      'inventoryValue',
+      'lastUpdated',
+      'updatedAt',
+      'stockTrend',
+      'stockReason',
+      'newStock'
+    ]);
+
+    const updatePayload = {};
+    Object.keys(productData || {}).forEach((key) => {
+      if (!skipKeys.has(key) && productData[key] !== undefined) {
+        updatePayload[key] = productData[key];
+      }
+    });
+
+    const ensureRequiredFields = (existing = {}) => {
+      const requiredFields = ['name', 'category', 'description', 'minStock', 'maxStock', 'unit', 'type'];
+      requiredFields.forEach((field) => {
+        if (updatePayload[field] === undefined && existing[field] !== undefined) {
+          updatePayload[field] = existing[field];
+        }
+      });
     };
-    delete sanitizedData.stockQuantity;
-    delete sanitizedData.currentStock;
-    delete sanitizedData.stockReason;
-    delete sanitizedData.price;
-    delete sanitizedData.inventoryValue;
-    delete sanitizedData.lastUpdated;
-    delete sanitizedData.updatedAt;
-    delete sanitizedData.stockTrend;
 
     if (hasStockUpdate) {
       const incomingStock = Number(incomingStockValue);
@@ -294,17 +309,20 @@ export const updateProduct = async (productId, productData) => {
         if (!prodSnap.exists()) throw new Error('Product not found');
 
         const existing = prodSnap.data() || {};
+        ensureRequiredFields(existing);
+
         const previousQty = Number(existing.stockQuantity ?? existing.currentStock ?? 0) || 0;
         const newQty = Number.isFinite(incomingStock) ? incomingStock : previousQty;
         const price = priceOverride !== undefined ? (Number(priceOverride) || 0) : (Number(existing.price) || 0);
         const delta = newQty - previousQty;
 
+        updatePayload.price = price;
+        updatePayload.stockQuantity = newQty;
+        updatePayload.currentStock = newQty;
+        updatePayload.inventoryValue = price * Math.max(newQty, 0);
+
         transaction.update(productRef, {
-          ...sanitizedData,
-          price,
-          stockQuantity: newQty,
-          currentStock: newQty,
-          inventoryValue: price * Math.max(newQty, 0),
+          ...updatePayload,
           updatedAt: serverTimestamp(),
           lastUpdated: serverTimestamp()
         });
@@ -324,14 +342,16 @@ export const updateProduct = async (productId, productData) => {
       const prodSnap = await getDoc(productRef);
       if (!prodSnap.exists()) throw new Error('Product not found');
       const existing = prodSnap.data() || {};
+      ensureRequiredFields(existing);
 
       const price = priceOverride !== undefined ? (Number(priceOverride) || 0) : (Number(existing.price) || 0);
       const stockQty = Number(existing.stockQuantity ?? existing.currentStock ?? 0) || 0;
 
+      updatePayload.price = price;
+      updatePayload.inventoryValue = price * Math.max(stockQty, 0);
+
       await updateDoc(productRef, {
-        ...sanitizedData,
-        price,
-        inventoryValue: price * Math.max(stockQty, 0),
+        ...updatePayload,
         updatedAt: serverTimestamp(),
         lastUpdated: serverTimestamp()
       });

@@ -23,7 +23,7 @@ const InventoryPage = () => {
   const [selectedType, setSelectedType] = useState('ALL');
   const [showViewModal, setShowViewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [selectedProduct, setSelectedProduct] = useState(null);
+  const [selectedProductId, setSelectedProductId] = useState(null);
 
   // Fetch products from Firestore with real-time updates
   useEffect(() => {
@@ -96,7 +96,7 @@ const InventoryPage = () => {
   // Handle view/edit/delete actions
   const handleViewProduct = (product) => {
     try {
-      setSelectedProduct(product);
+      setSelectedProductId(product?.id || null);
       setShowViewModal(true);
     } catch (err) {
       console.error('Error viewing product:', err);
@@ -106,7 +106,7 @@ const InventoryPage = () => {
 
   const handleEditProduct = (product) => {
     try {
-      setSelectedProduct(product);
+      setSelectedProductId(product?.id || null);
       setShowEditModal(true);
     } catch (err) {
       console.error('Error editing product:', err);
@@ -132,10 +132,16 @@ const InventoryPage = () => {
   };
 
   const handleProductUpdated = () => {
-    // The real-time listener will automatically update the products list
     console.log('Product updated - inventory will update automatically');
-    toast.success('Product updated successfully');
   };
+  const selectedProduct = useMemo(() => {
+    if (!selectedProductId) {
+      return null;
+    }
+
+    return products.find((product) => product.id === selectedProductId) || null;
+  }, [products, selectedProductId]);
+
 
   const inventorySummary = useMemo(() => {
     return (products || []).reduce((acc, product) => {
@@ -403,7 +409,7 @@ const InventoryPage = () => {
         isOpen={showViewModal}
         onClose={() => {
           setShowViewModal(false);
-          setSelectedProduct(null);
+          setSelectedProductId(null);
         }}
         product={selectedProduct}
       />
@@ -411,7 +417,7 @@ const InventoryPage = () => {
         isOpen={showEditModal}
         onClose={() => {
           setShowEditModal(false);
-          setSelectedProduct(null);
+          setSelectedProductId(null);
         }}
         product={selectedProduct}
         onProductUpdated={handleProductUpdated}

@@ -68,6 +68,7 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
         name: formData.name.trim(),
         description: formData.description.trim(),
         type: formData.type,
+        category: formData.type,
         price,
         unit: formData.unit.trim(),
         stockQuantity: currentStock, // Primary stock field

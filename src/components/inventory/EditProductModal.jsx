@@ -1,7 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X } from 'lucide-react';
-import { doc } from 'firebase/firestore';
-import { db, updateProduct, auth } from '../../services/firebase';
+import { updateProduct, auth } from '../../services/firebase';
 import toast from 'react-hot-toast';
 import {
   productTypes,
@@ -17,7 +16,7 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     name: '',
     description: '',
     price: 0,
-    stockQuantity: 0, // Changed from currentStock to stockQuantity
+  stockQuantity: 0, // Displayed current stock level
     minStock: 0,
     maxStock: 0,
     unit: '',
@@ -29,29 +28,10 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
   const handleChange = (e) => {
     const { name, value } = e.target;
     if (name === 'newStock') {
-      setFormData((prev) => {
-        if (value === '') {
-          return {
-            ...prev,
-            newStock: '',
-            stockQuantity: product?.stockQuantity ?? prev.stockQuantity
-          };
-        }
-
-        const parsed = Number(value);
-        if (Number.isNaN(parsed) || parsed < 0) {
-          return {
-            ...prev,
-            newStock: value
-          };
-        }
-
-        return {
-          ...prev,
-          newStock: value,
-          stockQuantity: parsed
-        };
-      });
+      setFormData((prev) => ({
+        ...prev,
+        newStock: value
+      }));
       return;
     }
 
@@ -69,7 +49,7 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
         name: product.name,
         description: product.description || '',
         price: product.price,
-        stockQuantity: product.stockQuantity, // Changed from currentStock
+  stockQuantity: Number(product.stockQuantity ?? product.currentStock ?? 0) || 0,
         minStock: product.minStock,
         maxStock: product.maxStock,
         unit: product.unit,
@@ -95,15 +75,54 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     ];
   })();
 
+  const baseStock = Number(product?.stockQuantity ?? product?.currentStock ?? 0) || 0;
+  const additionalStock = useMemo(() => {
+    if (formData.newStock === '') {
+      return null;
+    }
+    const parsed = Number(formData.newStock);
+    return Number.isNaN(parsed) ? null : parsed;
+  }, [formData.newStock]);
+
+  const projectedStock = useMemo(() => {
+    if (additionalStock === null) {
+      return baseStock;
+    }
+    return Math.max(0, baseStock + additionalStock);
+  }, [additionalStock, baseStock]);
+
+  const wouldGoNegative = additionalStock !== null && baseStock + additionalStock < 0;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
+    console.log('[EditProductModal] Submit start', {
+      productId: product?.id,
+      formData,
+      additionalStock,
+      baseStock,
+      projectedStock
+    });
 
     try {
       const hasCustomImage = formData.imageUrl && /^https?:\/\//i.test(formData.imageUrl);
       const imageUrl = hasCustomImage ? formData.imageUrl : null;
-      const previousStock = Number(product.stockQuantity ?? product.currentStock ?? 0) || 0;
-      const updatedStock = Number(formData.stockQuantity ?? previousStock) || 0;
+      const previousStock = baseStock;
+      if (additionalStock !== null) {
+        const projectedRaw = baseStock + additionalStock;
+        if (!Number.isFinite(projectedRaw)) {
+          throw new Error('Invalid stock adjustment value');
+        }
+        if (projectedRaw < 0) {
+          toast.error('Stock cannot be reduced below zero. Adjust the amount or restock first.');
+          console.warn('[EditProductModal] Prevented negative stock adjustment', {
+            baseStock,
+            additionalStock
+          });
+          return;
+        }
+      }
+      const updatedStock = additionalStock === null ? previousStock : projectedStock;
       const stockAdjusted = updatedStock !== previousStock;
       const stockTrendDelta = previousStock === 0
         ? (updatedStock > 0 ? 100 : 0)
@@ -111,26 +130,40 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
 
       // Update product in Firestore via service so stock history is recorded
       const { newStock, ...formValues } = formData;
+      const categoryValue = formValues.type || product?.category || product?.type || 'uncategorized';
 
-      await updateProduct(product.id, {
+      const updatePayload = {
         ...formValues,
-  imageUrl,
+        category: categoryValue,
+  stockQuantity: updatedStock,
+  currentStock: updatedStock,
+        imageUrl,
         lastUpdated: new Date(),
         stockTrend: stockTrendDelta,
-        currentStock: updatedStock, // Keep for backward compatibility
         updatedBy: auth.currentUser?.uid,
         updatedByEmail: auth.currentUser?.email,
-        stockReason: stockAdjusted ? 'Manual stock update via edit form' : 'Manual update via edit form'
-      });
+        stockReason: stockAdjusted
+          ? additionalStock > 0
+            ? `Restocked by ${additionalStock}`
+            : `Reduced by ${Math.abs(additionalStock)}`
+          : 'Manual update via edit form'
+      };
+
+      console.log('[EditProductModal] Submitting update payload', updatePayload);
+
+      await updateProduct(product.id, updatePayload);
 
       toast.success('Product updated successfully');
-      onProductUpdated();
+      console.log('[EditProductModal] Update complete');
+      onProductUpdated?.();
       onClose();
     } catch (error) {
-      console.error('Error updating product:', error);
-      toast.error('Failed to update product');
+      console.error('[EditProductModal] Error updating product:', error);
+      const errorMessage = error?.message ? `Failed to update product: ${error.message}` : 'Failed to update product';
+      toast.error(errorMessage);
     } finally {
       setLoading(false);
+      console.log('[EditProductModal] Submit finished');
     }
   };
 
@@ -285,13 +318,13 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
               <input
                 type="number"
                 name="stockQuantity"
-                value={formData.stockQuantity}
+                value={baseStock}
                 min="0"
                 required
                 readOnly
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent bg-gray-100"
               />
-              <p className="mt-1 text-xs text-gray-500">Updates automatically when you enter a new stock value.</p>
+              <p className="mt-1 text-xs text-gray-500">Represents the quantity currently available in inventory.</p>
             </div>
 
             {/* Min Stock */}
@@ -336,11 +369,40 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
                 name="newStock"
                 value={formData.newStock}
                 onChange={handleChange}
-                min="0"
-                placeholder="Enter new stock level"
+                step="any"
+                placeholder="Enter units to add or remove"
                 className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               />
-              <p className="mt-1 text-xs text-gray-500">Leave blank to keep the current stock unchanged.</p>
+              <p className="mt-1 text-xs text-gray-500">
+                Leave blank to keep current stock. Positive values add stock, negative values reduce it.
+              </p>
+            </div>
+
+            {/* Projected Stock */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Projected Stock After Update
+              </label>
+              <input
+                type="number"
+                value={projectedStock}
+                readOnly
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 text-gray-700"
+              />
+              {wouldGoNegative && (
+                <p className="mt-1 text-xs text-red-600">
+                  This adjustment would make stock negative. Reduce the deduction or add stock first.
+                </p>
+              )}
+              {!wouldGoNegative && additionalStock !== null && Number.isFinite(additionalStock) && (
+                <p className="mt-1 text-xs text-gray-500">
+                  {additionalStock > 0
+                    ? `Adding ${additionalStock} unit(s)`
+                    : additionalStock < 0
+                    ? `Reducing by ${Math.abs(additionalStock)} unit(s)`
+                    : 'No change to stock.'}
+                </p>
+              )}
             </div>
           </div>
 
