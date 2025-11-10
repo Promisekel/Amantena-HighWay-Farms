@@ -20,7 +20,6 @@ import {
   setDoc,
   query,
   orderBy,
-  where,
   serverTimestamp,
   runTransaction
 } from 'firebase/firestore';

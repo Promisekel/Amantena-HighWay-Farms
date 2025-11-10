@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   AlertCircle,
   BarChart3,
@@ -35,17 +35,14 @@ import {
   collection,
   getDocs,
   addDoc,
-  deleteDoc,
   serverTimestamp,
   writeBatch,
   onSnapshot
 } from 'firebase/firestore';
 import { 
-  sendPasswordResetEmail,
   onAuthStateChanged
 } from 'firebase/auth';
-import { auth, db } from '../../services/firebase';
-import { logOut } from '../../services/firebase';
+import { auth, db, logOut } from '../../services/firebase';
 import toast from 'react-hot-toast';
 
 const DEFAULT_AUTHORIZED_EMAILS = ['admin@amantena.com', 'promisebansah12@gmail.com'];
@@ -59,25 +56,32 @@ const normalizeEmailList = (emails = []) => {
   ));
 };
 
+const checkEmailAuthorization = (email, authorizedEmails) => {
+  if (!email || !authorizedEmails || authorizedEmails.length === 0) return false;
+  return authorizedEmails.map(e => e.toLowerCase()).includes(email.toLowerCase());
+};
+
+const INITIAL_SETTINGS = {
+  // App Settings
+  appName: 'Amantena Highway Farms',
+  appDescription: 'Inventory Management System',
+  // General Settings
+  farmName: 'Amantena Highway Farms',
+  farmDescription: 'Premium agricultural products from Ghana',
+  lowStockThreshold: 20,
+  dateFormat: 'MM/dd/yyyy',
+  authorizedEmails: normalizeEmailList(DEFAULT_AUTHORIZED_EMAILS),
+  // Security Settings
+  autoLogout: 30,
+  // Other settings
+  autoBackup: true,
+  exportFormat: 'csv',
+  auditLog: true
+};
+
 const Settings = () => {
   // Initialize all state variables at the top
-  const [settings, setSettings] = useState({
-    // App Settings
-    appName: 'Amantena Highway Farms',
-    appDescription: 'Inventory Management System',
-    // General Settings
-    farmName: 'Amantena Highway Farms',
-    farmDescription: 'Premium agricultural products from Ghana',
-    lowStockThreshold: 20,
-    dateFormat: 'MM/dd/yyyy',
-  authorizedEmails: normalizeEmailList(DEFAULT_AUTHORIZED_EMAILS),
-    // Security Settings
-    autoLogout: 30, // Default 30 minutes
-    // Other settings
-    autoBackup: true,
-    exportFormat: 'csv',
-    auditLog: true
-  });
+  const [settings, setSettings] = useState(INITIAL_SETTINGS);
   
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -89,44 +93,7 @@ const Settings = () => {
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const fileInputRef = useRef(null);
-
-  // Toast utility function
-  const showToast = (message, type = 'success') => {
-    switch (type) {
-      case 'success':
-        toast.success(message);
-        break;
-      case 'error':
-        toast.error(message);
-        break;
-      case 'info':
-        toast.custom((t) => (
-          <div className="bg-white rounded-lg shadow-lg p-4">
-            <div className="flex items-start">
-              <AlertCircle className="w-5 h-5 text-blue-500 mt-0.5" />
-              <div className="ml-3">
-                <p className="text-sm font-medium text-gray-900">{message}</p>
-              </div>
-            </div>
-          </div>
-        ));
-        break;
-      default:
-        toast(message);
-    }
-  };
-
-  // Function to convert data to CSV
-  const convertToCSV = (items) => {
-    const headers = ['Name', 'Category', 'Quantity', 'Price'];
-    const rows = items.map(item => [
-      item.name.replace(/,/g, ' '), 
-      item.category.replace(/,/g, ' '), 
-      item.quantity, 
-      item.price
-    ].join(','));
-    return headers.join(',') + '\n' + rows.join('\n');
-  };
+  const unauthorizedNotifiedRef = useRef(false);
 
   // Function to parse CSV
   const parseCSV = (text) => {
@@ -415,7 +382,7 @@ const Settings = () => {
       window.removeEventListener('click', resetTimer);
       window.removeEventListener('scroll', resetTimer);
     };
-  }, [settings?.autoLogout, currentUser, lastActivity, logOut]);
+  }, [settings?.autoLogout, currentUser, lastActivity]);
 
   const handleAddEmail = async () => {
     if (!newEmail) {
@@ -510,10 +477,14 @@ const Settings = () => {
       });
       
       // Update local state after successful save
-      setSettings(prev => ({
-        ...prev,
-        authorizedEmails: updatedEmails
-      }));
+      setSettings(prev => {
+        const updated = {
+          ...prev,
+          authorizedEmails: updatedEmails
+        };
+        localStorage.setItem('farmSettings', JSON.stringify(updated));
+        return updated;
+      });
       
       toast.success('Email removed successfully!');
     } catch (error) {
@@ -521,18 +492,12 @@ const Settings = () => {
       toast.error('Failed to remove email');
     }
   };
-  // Check if email is authorized
-  const checkEmailAuthorization = (email, authorizedEmails) => {
-    if (!email || !authorizedEmails || authorizedEmails.length === 0) return false;
-    return authorizedEmails.map(e => e.toLowerCase()).includes(email.toLowerCase());
-  };
-
   // Effect to load settings and monitor auth state
   useEffect(() => {
     const loadData = async () => {
       try {
         setLoading(true);
-        
+
         // Get farm info
         const farmDoc = await getDoc(doc(db, 'farm', 'info'));
         if (farmDoc.exists()) {
@@ -545,22 +510,6 @@ const Settings = () => {
         }
 
         await loadSettingsAndUsers();
-        
-        // Check email authorization
-        if (currentUser?.email) {
-          const isAuthorized = checkEmailAuthorization(currentUser.email, settings.authorizedEmails);
-          if (!isAuthorized) {
-            toast.error('Warning: Your email is not authorized. Contact an administrator for access.', {
-              duration: 10000, // Show for 10 seconds
-              style: {
-                border: '1px solid #991B1B',
-                background: '#FEE2E2',
-                padding: '16px',
-                color: '#991B1B',
-              },
-            });
-          }
-        }
       } catch (error) {
         console.error('Error loading farm info:', error);
         toast.error('Failed to load farm information');
@@ -590,53 +539,42 @@ const Settings = () => {
           await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
         }
 
-        setSettings(prev => ({
-          ...prev,
-          ...firestoreSettings,
-          authorizedEmails
-        }));
+        setSettings(prev => {
+          const updated = {
+            ...prev,
+            ...firestoreSettings,
+            authorizedEmails
+          };
+          localStorage.setItem('farmSettings', JSON.stringify(updated));
+          return updated;
+        });
       }
     });
-    
+
     // Listen for auth changes
     const authUnsubscribe = onAuthStateChanged(auth, async (user) => {
       setCurrentUser(user);
       if (user) {
-        // Check if the user's email is authorized
-        if (settings.authorizedEmails && !checkEmailAuthorization(user.email, settings.authorizedEmails)) {
-          toast.error('Warning: Your email is not authorized. Contact an administrator for access.', {
-            duration: 10000, // Show for 10 seconds
-            style: {
-              border: '1px solid #991B1B',
-              background: '#FEE2E2',
-              padding: '16px',
-              color: '#991B1B',
-            },
-            icon: '⚠️',
-          });
-        }
-        loadData(); // Reload settings when user auth state changes
+        await loadSettingsAndUsers();
       }
     });
 
-    loadData(); // Initial load
-    
+    loadData();
+
     return () => {
       authUnsubscribe();
       settingsUnsubscribe();
     };
-  }, [currentUser]);
+  }, [currentUser?.email, loadSettingsAndUsers]);
 
-  const loadSettingsAndUsers = async () => {
+  const loadSettingsAndUsers = useCallback(async () => {
     try {
       setLoading(true);
-      
-      // Load settings from Firestore
+
       const appSettingsRef = doc(db, 'settings', 'app-settings');
       const settingsDoc = await getDoc(appSettingsRef);
       if (settingsDoc.exists()) {
         const firestoreSettings = settingsDoc.data();
-        // Normalize authorized email entries
         let authorizedEmails = normalizeEmailList(firestoreSettings.authorizedEmails);
 
         if (authorizedEmails.length === 0) {
@@ -654,40 +592,30 @@ const Settings = () => {
           await setDoc(appSettingsRef, { authorizedEmails }, { merge: true });
         }
 
-        const updatedSettings = {
-          ...settings,
-          ...firestoreSettings,
-          authorizedEmails
-        };
-
-        setSettings(updatedSettings);
-        localStorage.setItem('farmSettings', JSON.stringify(updatedSettings));
-
-        // Check if current user's email is authorized
-        if (currentUser?.email && !checkEmailAuthorization(currentUser.email, authorizedEmails)) {
-          // Show warning for unauthorized users
-          toast.error('Warning: Your email is not authorized. Contact an administrator for access.', {
-            duration: 10000,
-            style: {
-              border: '1px solid #991B1B',
-              background: '#FEE2E2',
-              padding: '16px',
-              color: '#991B1B',
-            },
-            icon: '⚠️',
-          });
-        }
+        setSettings(prev => {
+          const updated = {
+            ...prev,
+            ...firestoreSettings,
+            authorizedEmails
+          };
+          localStorage.setItem('farmSettings', JSON.stringify(updated));
+          return updated;
+        });
       } else {
-        // Create default settings document with current user's email
+        const fallbackEmails = normalizeEmailList([
+          ...DEFAULT_AUTHORIZED_EMAILS,
+          ...(currentUser?.email ? [currentUser.email] : [])
+        ]);
+
         const defaultSettings = {
-          ...settings,
-          authorizedEmails: currentUser
-            ? Array.from(new Set([...DEFAULT_AUTHORIZED_EMAILS, currentUser.email])).map(email => email?.trim()).filter(Boolean)
-            : [...DEFAULT_AUTHORIZED_EMAILS],
-          autoLogout: 30 // Default 30 minutes
+          ...INITIAL_SETTINGS,
+          authorizedEmails: fallbackEmails,
+          autoLogout: 30
         };
-        await setDoc(doc(db, 'settings', 'app-settings'), defaultSettings);
+
+        await setDoc(appSettingsRef, defaultSettings);
         setSettings(defaultSettings);
+        localStorage.setItem('farmSettings', JSON.stringify(defaultSettings));
       }
     } catch (error) {
       console.error('Error loading settings:', error);
@@ -695,7 +623,34 @@ const Settings = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentUser?.email]);
+
+  useEffect(() => {
+    if (!currentUser?.email || !Array.isArray(settings.authorizedEmails)) {
+      unauthorizedNotifiedRef.current = false;
+      return;
+    }
+
+    const isAuthorized = checkEmailAuthorization(currentUser.email, settings.authorizedEmails);
+    if (!isAuthorized && !unauthorizedNotifiedRef.current) {
+      toast.error('Warning: Your email is not authorized. Contact an administrator for access.', {
+        duration: 10000,
+        style: {
+          border: '1px solid #991B1B',
+          background: '#FEE2E2',
+          padding: '16px',
+          color: '#991B1B',
+        },
+        icon: '⚠️'
+      });
+      unauthorizedNotifiedRef.current = true;
+      return;
+    }
+
+    if (isAuthorized) {
+      unauthorizedNotifiedRef.current = false;
+    }
+  }, [currentUser?.email, settings.authorizedEmails]);
   const saveSettings = async () => {
     try {
       setSaving(true);
@@ -719,8 +674,8 @@ const Settings = () => {
 
       // Prepare the settings object
       const settingsToSave = {
-  ...settings,
-  authorizedEmails,
+        ...settings,
+        authorizedEmails,
         appName: settings.appName || settings.farmName,
         appDescription: settings.appDescription || settings.farmDescription,
         farmName: settings.appName || settings.farmName,
@@ -755,141 +710,6 @@ const Settings = () => {
       toast.error('Failed to save settings');
     } finally {
       setSaving(false);
-    }
-  };
-
-  const exportData = async () => {
-    try {
-      // Fetch data from Firestore
-      const salesRef = collection(db, 'sales');
-      const inventoryRef = collection(db, 'inventory');
-      
-      const [salesSnapshot, inventorySnapshot] = await Promise.all([
-        getDocs(salesRef),
-        getDocs(inventoryRef)
-      ]);
-
-      // Convert to arrays
-      const sales = salesSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        date: new Date(doc.data().date?.toDate()).toLocaleDateString()
-      }));
-
-      const inventory = inventorySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-
-      // Create CSV content
-      const formatData = (data) => {
-        if (settings.exportFormat === 'csv') {
-          // Convert data to CSV
-          const replacer = (key, value) => value === null ? '' : value;
-          const header = Object.keys(data[0]);
-          const csv = [
-            header.join(','),
-            ...data.map(row => header.map(fieldName => 
-              JSON.stringify(row[fieldName], replacer)).join(','))
-          ].join('\r\n');
-          return new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-        } else {
-          // For Excel, you'll need to implement XLSX conversion here
-          // This is a placeholder - you should use a library like xlsx
-          return new Blob([JSON.stringify(data)], { 
-            type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
-          });
-        }
-      };
-
-      // Create multiple files
-      const files = {
-        sales: formatData(sales),
-        inventory: formatData(inventory)
-      };
-
-      // Download each file
-      for (const [type, blob] of Object.entries(files)) {
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `amantena-farms-${type}-${new Date().toISOString().split('T')[0]}.${settings.exportFormat}`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-      }
-      
-      toast.success('Data exported successfully!');
-    } catch (error) {
-      console.error('Error exporting data:', error);
-      toast.error('Failed to export data');
-    }
-  };
-
-  const importData = async (file) => {
-    try {
-      const extension = file.name.split('.').pop().toLowerCase();
-      
-      if (extension !== 'csv' && extension !== 'xlsx' && extension !== 'xls') {
-        toast.error('Please upload a valid Excel or CSV file');
-        return;
-      }
-
-      // Read file content
-      const text = await file.text();
-      const rows = text.split('\n').map(row => row.split(','));
-      const headers = rows[0];
-      const data = rows.slice(1).map(row => {
-        const obj = {};
-        headers.forEach((header, index) => {
-          obj[header.trim()] = row[index]?.trim() || '';
-        });
-        return obj;
-      });
-
-      // Validate data structure
-      if (!data.length) {
-        toast.error('No data found in file');
-        return;
-      }
-
-      // Determine data type from headers
-      const isInventory = headers.includes('productName') || headers.includes('quantity');
-      const isSales = headers.includes('saleDate') || headers.includes('totalAmount');
-
-      // Import to appropriate collection
-      const collectionName = isInventory ? 'inventory' : (isSales ? 'sales' : null);
-      if (!collectionName) {
-        toast.error('Unable to determine data type');
-        return;
-      }
-
-      // Import data to Firestore
-      const batch = writeBatch(db);
-      const dbCollection = collection(db, collectionName);
-      data.forEach((item) => {
-        const docRef = doc(dbCollection);
-        batch.set(docRef, item);
-      });
-
-      await batch.commit();
-
-      // Log import action if audit logging is enabled
-      if (settings.auditLog) {
-        await addDoc(collection(db, 'audit-logs'), {
-          action: 'data_imported',
-          userId: currentUser?.uid || 'system',
-          userEmail: currentUser?.email || 'system',
-          timestamp: serverTimestamp(),
-          details: `Imported ${data.length} records to ${collectionName}`
-        });
-      }
-
-      toast.success(`${data.length} records imported successfully!`);
-    } catch (error) {
-      console.error('Error importing data:', error);
-      toast.error('Failed to import data. Please check the file format.');
     }
   };
 
