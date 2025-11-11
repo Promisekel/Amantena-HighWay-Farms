@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { X, Loader } from 'lucide-react';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
@@ -6,10 +6,12 @@ import toast from 'react-hot-toast';
 import {
   productTypes,
   productVariantsByType,
-  getProductTypeLabel,
+  productCatalog,
   getProductTypePlaceholder,
   getProductVariantMeta
 } from './productTypes';
+
+const normaliseValue = (value = '') => value.trim().toLowerCase();
 
 const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -23,6 +25,115 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
     minStock: '',
     maxStock: ''
   });
+
+  const [typeInputFocused, setTypeInputFocused] = useState(false);
+  const [nameInputFocused, setNameInputFocused] = useState(false);
+
+  const typeBlurTimeout = useRef(null);
+  const nameBlurTimeout = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (typeBlurTimeout.current) {
+        clearTimeout(typeBlurTimeout.current);
+      }
+      if (nameBlurTimeout.current) {
+        clearTimeout(nameBlurTimeout.current);
+      }
+    };
+  }, []);
+
+  const productTypeOptions = useMemo(() => productTypes || [], []);
+
+  const matchedType = useMemo(() => {
+    if (!formData.type) {
+      return null;
+    }
+    const normalisedInput = normaliseValue(formData.type);
+    return (
+      productTypeOptions.find((option) => {
+        const normalisedValue = normaliseValue(option.value);
+        const normalisedLabel = normaliseValue(option.label);
+        return normalisedValue === normalisedInput || normalisedLabel === normalisedInput;
+      }) || null
+    );
+  }, [formData.type, productTypeOptions]);
+
+  const variantOptions = useMemo(() => {
+    if (!matchedType) {
+      return [];
+    }
+    const variants = productVariantsByType[matchedType.value] || [];
+    return variants.map((variant) => ({
+      ...variant,
+      parentType: matchedType.value,
+      parentLabel: matchedType.label
+    }));
+  }, [matchedType]);
+
+  const allVariantSuggestions = useMemo(() => {
+    const seen = new Map();
+    productCatalog.forEach((catalogItem) => {
+      const variants = productVariantsByType[catalogItem.value] || [];
+      variants.forEach((variant) => {
+        if (!seen.has(variant.value)) {
+          seen.set(variant.value, {
+            ...variant,
+            parentType: catalogItem.value,
+            parentLabel: catalogItem.label
+          });
+        }
+      });
+    });
+    return Array.from(seen.values());
+  }, []);
+
+  const productNameSuggestionSource = useMemo(() => {
+    return variantOptions.length > 0 ? variantOptions : allVariantSuggestions;
+  }, [variantOptions, allVariantSuggestions]);
+
+  const typeSuggestions = useMemo(() => {
+    if (!formData.type) {
+      return productTypeOptions.slice(0, 6);
+    }
+
+    const normalisedInput = normaliseValue(formData.type);
+    return productTypeOptions
+      .filter((option) => {
+        const valueMatch = normaliseValue(option.value).includes(normalisedInput);
+        const labelMatch = normaliseValue(option.label).includes(normalisedInput);
+        return valueMatch || labelMatch;
+      })
+      .slice(0, 6);
+  }, [formData.type, productTypeOptions]);
+
+  const productNameSuggestions = useMemo(() => {
+    if (!formData.type) {
+      return [];
+    }
+
+    if (!formData.name) {
+      return productNameSuggestionSource.slice(0, 8);
+    }
+
+    const normalisedInput = normaliseValue(formData.name);
+    return productNameSuggestionSource
+      .filter((variant) => {
+        const valueMatch = normaliseValue(variant.value).includes(normalisedInput);
+        const labelMatch = normaliseValue(variant.label || '').includes(normalisedInput);
+        return valueMatch || labelMatch;
+      })
+      .slice(0, 8);
+  }, [formData.type, formData.name, productNameSuggestionSource]);
+
+  const selectedTypeLabel = matchedType ? matchedType.label : (formData.type || '');
+  const previewPlaceholderSrc = getProductTypePlaceholder(matchedType?.value);
+  const previewLabel = selectedTypeLabel ? selectedTypeLabel.toLowerCase() : 'product';
+  const productNamePlaceholder = !formData.type
+    ? 'Enter product type first'
+    : matchedType
+      ? `Search or add ${selectedTypeLabel} products`
+      : 'Enter product name';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -63,12 +174,28 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
         return;
       }
 
+      const canonicalType = matchedType ? matchedType.value : formData.type.trim();
+      const productName = formData.name.trim();
+
+      if (!canonicalType) {
+        toast.error('Please enter a valid product type');
+        return;
+      }
+
+      if (!productName) {
+        toast.error('Please enter a valid product name');
+        return;
+      }
+
+      const canonicalCategory = canonicalType;
+
       // Prepare product data
       const productData = {
-        name: formData.name.trim(),
+        name: productName,
         description: formData.description.trim(),
-        type: formData.type,
-        category: formData.type,
+        type: canonicalType,
+        category: canonicalCategory,
+        typeLabel: matchedType ? matchedType.label : formData.type.trim(),
         price,
         unit: formData.unit.trim(),
         stockQuantity: currentStock, // Primary stock field
@@ -118,33 +245,76 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
     }));
   };
 
-  const handleTypeChange = (e) => {
-    const newType = e.target.value;
+  const handleTypeInputChange = (e) => {
+    const { value } = e.target;
     setFormData(prev => ({
       ...prev,
-      type: newType,
+      type: value,
+      // reset dependent fields when type changes
       name: '',
       unit: ''
     }));
   };
 
-  const handleProductChange = (e) => {
-    const selectedValue = e.target.value;
-    const variantMeta = getProductVariantMeta(formData.type, selectedValue);
-
+  const handleTypeSuggestionSelect = (option) => {
     setFormData(prev => ({
       ...prev,
-      name: selectedValue,
-      unit: variantMeta?.size || prev.unit
+      type: option.label,
+      name: '',
+      unit: ''
+    }));
+    setTypeInputFocused(false);
+  };
+
+  const handleProductNameInputChange = (e) => {
+    const { value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      name: value
     }));
   };
 
-  if (!isOpen) return null;
+  const handleProductSuggestionSelect = (variant) => {
+    const effectiveTypeValue = variant.parentType || matchedType?.value || null;
+    const effectiveTypeLabel = variant.parentLabel || matchedType?.label || formData.type;
+    const variantMeta = effectiveTypeValue ? getProductVariantMeta(effectiveTypeValue, variant.value) : null;
 
-  const productTypeOptions = productTypes || [];
-  const variantOptions = formData.type ? (productVariantsByType[formData.type] || []) : [];
-  const selectedTypeLabel = formData.type ? getProductTypeLabel(formData.type) : '';
-  const previewLabel = selectedTypeLabel ? selectedTypeLabel.toLowerCase() : 'product';
+    setFormData(prev => ({
+      ...prev,
+      type: effectiveTypeLabel || prev.type,
+      name: variant.value,
+      unit: variantMeta?.size || variant.size || prev.unit
+    }));
+    setNameInputFocused(false);
+  };
+
+  const handleTypeInputFocus = () => {
+    if (typeBlurTimeout.current) {
+      clearTimeout(typeBlurTimeout.current);
+    }
+    setTypeInputFocused(true);
+  };
+
+  const handleTypeInputBlur = () => {
+    typeBlurTimeout.current = setTimeout(() => {
+      setTypeInputFocused(false);
+    }, 150);
+  };
+
+  const handleNameInputFocus = () => {
+    if (nameBlurTimeout.current) {
+      clearTimeout(nameBlurTimeout.current);
+    }
+    setNameInputFocused(true);
+  };
+
+  const handleNameInputBlur = () => {
+    nameBlurTimeout.current = setTimeout(() => {
+      setNameInputFocused(false);
+    }, 150);
+  };
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
@@ -172,8 +342,8 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
               {formData.type ? (
                 <div className="relative w-40 h-40">
                   <img
-                    src={getProductTypePlaceholder(formData.type)}
-                    alt={`${selectedTypeLabel} preview`}
+                    src={previewPlaceholderSrc || getProductTypePlaceholder(formData.type)}
+                    alt={selectedTypeLabel ? `${selectedTypeLabel} preview` : 'Product preview'}
                     className="w-full h-full object-cover rounded-lg"
                   />
                   <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 text-white text-xs py-1 px-2 text-center">
@@ -196,42 +366,81 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Product Type <span className="text-red-500">*</span>
               </label>
-              <select
-                name="type"
-                value={formData.type}
-                onChange={handleTypeChange}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-              >
-                <option value="">Select a type...</option>
-                {productTypeOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <input
+                  type="text"
+                  name="type"
+                  value={formData.type}
+                  onChange={handleTypeInputChange}
+                  onFocus={handleTypeInputFocus}
+                  onBlur={handleTypeInputBlur}
+                  required
+                  autoComplete="off"
+                  placeholder="Start typing to search or add"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                />
+                {typeInputFocused && typeSuggestions.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                    <ul className="py-1">
+                      {typeSuggestions.map((option) => (
+                        <li key={option.value}>
+                          <button
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handleTypeSuggestionSelect(option)}
+                            className="w-full text-left px-3 py-2 hover:bg-emerald-50 focus:bg-emerald-50"
+                          >
+                            <span className="block text-sm font-medium text-gray-900">{option.label}</span>
+                            <span className="block text-xs text-gray-500">{option.value}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Product Name <span className="text-red-500">*</span>
               </label>
-              <select
-                name="name"
-                value={formData.name}
-                onChange={handleProductChange}
-                required
-                disabled={!formData.type}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100"
-              >
-                <option value="">Select {selectedTypeLabel ? `${selectedTypeLabel} product` : 'type first'}</option>
-                {variantOptions.map((variant) => (
-                  <option key={variant.value} value={variant.value}>
-                    {variant.label}
-                    {variant.size ? ` (${variant.size})` : ''}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <input
+                  type="text"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleProductNameInputChange}
+                  onFocus={handleNameInputFocus}
+                  onBlur={handleNameInputBlur}
+                  required
+                  disabled={!formData.type}
+                  autoComplete="off"
+                  placeholder={productNamePlaceholder}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100"
+                />
+                {nameInputFocused && productNameSuggestions.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                    <ul className="py-1">
+                      {productNameSuggestions.map((variant) => (
+                        <li key={variant.value}>
+                          <button
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handleProductSuggestionSelect(variant)}
+                            className="w-full text-left px-3 py-2 hover:bg-emerald-50 focus:bg-emerald-50"
+                          >
+                            <span className="block text-sm font-medium text-gray-900">{variant.label || variant.value}</span>
+                            {variant.size && (
+                              <span className="block text-xs text-gray-500">{variant.size}</span>
+                            )}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="md:col-span-2">

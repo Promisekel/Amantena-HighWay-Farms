@@ -119,6 +119,7 @@ export const normaliseProductRecord = (raw) => {
     id: raw.id,
     name: raw.name || 'Unnamed Product',
     type: raw.type || 'UNSPECIFIED',
+    typeLabel: raw.typeLabel || null,
     price,
     stockQuantity,
     minStock,

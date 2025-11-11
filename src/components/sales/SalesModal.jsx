@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { X, Plus, Minus } from 'lucide-react';
+import React, { Fragment, useState, useEffect } from 'react';
+import { Combobox, Transition } from '@headlessui/react';
+import { X, Plus, Minus, ChevronDown } from 'lucide-react';
 import {
   collection,
   serverTimestamp,
@@ -13,6 +14,8 @@ import toast from 'react-hot-toast';
 import { normaliseProductRecord } from '../reports/reportUtils';
 import { getProductTypeLabel } from '../inventory/productTypes';
 
+const normaliseValue = (value = '') => value.trim().toLowerCase();
+
 const createEmptyItem = () => ({
   productId: '',
   productName: '',
@@ -21,7 +24,8 @@ const createEmptyItem = () => ({
   price: 0,
   quantity: 1,
   total: 0,
-  maxStock: 0
+  maxStock: 0,
+  searchTerm: ''
 });
 
 const SalesModal = ({ isOpen, onClose }) => {
@@ -50,36 +54,63 @@ const SalesModal = ({ isOpen, onClose }) => {
     }
   }, [isOpen]);
 
-  const handleProductChange = (index, productId) => {
-    const selectedProduct = products.find((product) => product.id === productId);
-    if (!selectedProduct) {
+  const resolveProductTypeLabel = (product) => {
+    return product?.typeLabel || product?.raw?.typeLabel || getProductTypeLabel(product?.type);
+  };
+
+  const handleProductSearchChange = (index, value) => {
+    setItems((prevItems) => {
+      const nextItems = [...prevItems];
+      const current = nextItems[index] || createEmptyItem();
+      nextItems[index] = {
+        ...current,
+        searchTerm: value,
+        productId: '',
+        productName: '',
+        productType: '',
+        typeLabel: '',
+        price: 0,
+        total: 0,
+        maxStock: 0
+      };
+      return nextItems;
+    });
+  };
+
+  const handleProductSelect = (index, product) => {
+    if (!product) {
       return;
     }
 
-    if (selectedProduct.stockQuantity <= 0) {
-      toast.error(`${selectedProduct.name} is out of stock`);
+    if (product.stockQuantity <= 0) {
+      toast.error(`${product.name} is out of stock`);
       return;
     }
 
     setItems((prevItems) => {
       const nextItems = [...prevItems];
-      const currentQuantity = nextItems[index]?.quantity || 1;
-      const adjustedQuantity = Math.min(currentQuantity, selectedProduct.stockQuantity);
+      const existing = nextItems[index] || createEmptyItem();
+      const currentQuantity = existing.quantity || 1;
+      const safeQuantity = Math.min(currentQuantity, product.stockQuantity);
 
-      if (currentQuantity > selectedProduct.stockQuantity) {
-        toast.warning(`Quantity adjusted to available stock: ${selectedProduct.stockQuantity}`);
+      if (currentQuantity > product.stockQuantity) {
+        toast.warning(`Quantity adjusted to available stock: ${product.stockQuantity}`);
       }
 
+      const unitPrice = Number(product.price) || 0;
+      const typeLabel = resolveProductTypeLabel(product);
+
       nextItems[index] = {
-        ...nextItems[index],
-        productId,
-        productName: selectedProduct.name,
-        productType: selectedProduct.type,
-        typeLabel: getProductTypeLabel(selectedProduct.type),
-        price: Number(selectedProduct.price) || 0,
-        quantity: adjustedQuantity,
-        total: (Number(selectedProduct.price) || 0) * adjustedQuantity,
-        maxStock: selectedProduct.stockQuantity
+        ...existing,
+        productId: product.id,
+        productName: product.name,
+        searchTerm: product.name,
+        productType: product.type,
+        typeLabel,
+        price: unitPrice,
+        quantity: safeQuantity,
+        total: unitPrice * safeQuantity,
+        maxStock: product.stockQuantity
       };
 
       return nextItems;
@@ -268,7 +299,7 @@ const SalesModal = ({ isOpen, onClose }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[90vh] overflow-hidden">
         <div className="bg-emerald-600 text-white p-6">
           <div className="flex items-center justify-between">
             <div>
@@ -311,74 +342,133 @@ const SalesModal = ({ isOpen, onClose }) => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {items.map((item, index) => (
-                  <tr key={index}>
-                    <td className="px-4 py-3">
-                      <select
-                        value={item.productId}
-                        onChange={(e) => handleProductChange(index, e.target.value)}
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                        required
-                      >
-                        <option value="">Select Product</option>
-                        {products.map((product) => (
-                          <option
-                            key={product.id}
-                            value={product.id}
-                            disabled={product.stockQuantity <= 0}
-                          >
-                            {product.name} • {getProductTypeLabel(product.type)} ({product.stockQuantity} in stock)
-                          </option>
-                        ))}
-                      </select>
-                      {item.typeLabel && (
-                        <p className="mt-1 text-xs text-gray-500">{item.typeLabel}</p>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        value={item.quantity}
-                        onChange={(e) => handleQuantityChange(index, parseInt(e.target.value, 10) || 0)}
-                        min="1"
-                        max={item.maxStock || undefined}
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
-                        required
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        value={(item.price || 0).toFixed(2)}
-                        readOnly
-                        className="w-full p-2 border border-gray-300 rounded-lg bg-gray-50"
-                        step="0.01"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="number"
-                        value={(item.total || 0).toFixed(2)}
-                        readOnly
-                        className="w-full p-2 border border-gray-300 rounded-lg bg-gray-50"
-                      />
-                    </td>
-                    <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => removeRow(index)}
-                        disabled={items.length === 1}
-                        className={`p-1.5 rounded-lg transition-colors ${
-                          items.length === 1
-                            ? 'text-gray-400 cursor-not-allowed'
-                            : 'text-red-600 hover:bg-red-50'
-                        }`}
-                      >
-                        <Minus size={16} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {items.map((item, index) => {
+                  const searchTerm = item.searchTerm || '';
+                  const normalisedSearch = normaliseValue(searchTerm);
+                  const filteredProducts = products
+                    .filter((product) => {
+                      const typeLabel = resolveProductTypeLabel(product);
+                      const searchHaystack = `${product.name} ${typeLabel}`.toLowerCase();
+                      if (!normalisedSearch) {
+                        return true;
+                      }
+                      return searchHaystack.includes(normalisedSearch);
+                    })
+                    .slice(0, 8);
+
+                  const selectedProduct = products.find((product) => product.id === item.productId) || null;
+
+                  return (
+                    <tr key={index}>
+                      <td className="relative px-4 py-3 align-top" style={{ minWidth: '22rem', overflow: 'visible' }}>
+                        <Combobox
+                          value={selectedProduct}
+                          nullable
+                          onChange={(product) => handleProductSelect(index, product)}
+                        >
+                          <div className="relative min-w-[22rem]">
+                            <Combobox.Input
+                              className="w-full min-w-[18rem] sm:min-w-[22rem] p-2 pr-8 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                              displayValue={(product) => product?.name || searchTerm}
+                              onChange={(event) => handleProductSearchChange(index, event.target.value)}
+                              placeholder="Select product from inventory"
+                              autoComplete="off"
+                            />
+                            <Combobox.Button className="absolute inset-y-0 right-0 flex items-center pr-2 text-gray-400">
+                              <ChevronDown size={16} aria-hidden="true" />
+                            </Combobox.Button>
+                            <Transition
+                              as={Fragment}
+                              leave="transition ease-in duration-100"
+                              leaveFrom="opacity-100"
+                              leaveTo="opacity-0"
+                            >
+                              <Combobox.Options className="absolute left-0 top-full z-30 mt-1 w-full min-w-[22rem] max-h-72 overflow-y-auto rounded-lg border border-gray-200 bg-white py-2 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
+                                {filteredProducts.length === 0 ? (
+                                  <div className="px-3 py-2 text-sm text-gray-500">No products found</div>
+                                ) : (
+                                  filteredProducts.map((product) => {
+                                    const typeLabel = resolveProductTypeLabel(product);
+                                    const outOfStock = product.stockQuantity <= 0;
+                                    return (
+                                      <Combobox.Option
+                                        key={product.id}
+                                        value={product}
+                                        disabled={outOfStock}
+                                        className={({ active, disabled }) =>
+                                          `relative cursor-default select-none px-3 py-2 ${
+                                            disabled
+                                              ? 'text-gray-400 cursor-not-allowed'
+                                              : active
+                                                ? 'bg-emerald-50 text-emerald-900'
+                                                : 'text-gray-900'
+                                          }`
+                                        }
+                                      >
+                                        <div>
+                                          <p className="text-sm font-medium">{product.name}</p>
+                                          <p className="text-xs text-gray-500">
+                                            {typeLabel} • GH₵{Number(product.price || 0).toFixed(2)} •{' '}
+                                            {outOfStock ? 'Out of stock' : `${product.stockQuantity} in stock`}
+                                          </p>
+                                        </div>
+                                      </Combobox.Option>
+                                    );
+                                  })
+                                )}
+                              </Combobox.Options>
+                            </Transition>
+                          </div>
+                        </Combobox>
+                        {item.typeLabel && (
+                          <p className="mt-1 text-xs text-gray-500">{item.typeLabel}</p>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          value={item.quantity}
+                          onChange={(e) => handleQuantityChange(index, parseInt(e.target.value, 10) || 0)}
+                          min="1"
+                          max={item.maxStock || undefined}
+                          className="w-full p-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                          required
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          value={(item.price || 0).toFixed(2)}
+                          readOnly
+                          className="w-full p-2 border border-gray-300 rounded-lg bg-gray-50"
+                          step="0.01"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="number"
+                          value={(item.total || 0).toFixed(2)}
+                          readOnly
+                          className="w-full p-2 border border-gray-300 rounded-lg bg-gray-50"
+                        />
+                      </td>
+                      <td className="px-4 py-3">
+                        <button
+                          type="button"
+                          onClick={() => removeRow(index)}
+                          disabled={items.length === 1}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            items.length === 1
+                              ? 'text-gray-400 cursor-not-allowed'
+                              : 'text-red-600 hover:bg-red-50'
+                          }`}
+                        >
+                          <Minus size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
