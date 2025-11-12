@@ -10,10 +10,12 @@ import {
   BarChart3,
   PieChart,
   LineChart,
-  Download
+  Download,
+  History
 } from 'lucide-react';
 import {
   collection,
+  collectionGroup,
   query,
   orderBy,
   limit,
@@ -23,12 +25,13 @@ import {
   Timestamp
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
-import { format } from 'date-fns';
+import { format, formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
 import {
   computeAnalytics,
   normaliseProductRecord,
   normaliseSaleRecord,
+  normaliseStockHistoryEntry,
   resolveDateRange,
   splitSalesByRange
 } from './reportUtils';
@@ -59,15 +62,17 @@ const Reports = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [sales, setSales] = useState([]);
   const [products, setProducts] = useState([]);
+  const [stockHistory, setStockHistory] = useState([]);
   const [salesReady, setSalesReady] = useState(false);
   const [productsReady, setProductsReady] = useState(false);
+  const [historyReady, setHistoryReady] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const rangeInfo = useMemo(() => resolveDateRange(dateRange), [dateRange]);
 
   useEffect(() => {
-    setLoading(!(salesReady && productsReady));
-  }, [salesReady, productsReady]);
+    setLoading(!(salesReady && productsReady && historyReady));
+  }, [salesReady, productsReady, historyReady]);
 
   useEffect(() => {
     setSalesReady(false);
@@ -116,24 +121,60 @@ const Reports = () => {
   const analytics = useMemo(() => computeAnalytics(sales, products, rangeInfo), [sales, products, rangeInfo]);
 
   useEffect(() => {
-    setLoading(!(salesReady && productsReady));
-  }, [salesReady, productsReady]);
+    setLoading(!(salesReady && productsReady && historyReady));
+  }, [salesReady, productsReady, historyReady]);
+
+  useEffect(() => {
+    setHistoryReady(false);
+
+    const historyQuery = query(
+      collectionGroup(db, 'stockHistory'),
+      orderBy('timestamp', 'desc'),
+      limit(120)
+    );
+
+    const unsubscribe = onSnapshot(
+      historyQuery,
+      (snapshot) => {
+        const entries = snapshot.docs.map((doc) => normaliseStockHistoryEntry(doc));
+        setStockHistory(entries);
+        setHistoryReady(true);
+      },
+      (error) => {
+        console.error('Stock history listener error:', error);
+        toast.error('Unable to load stock history');
+        setStockHistory([]);
+        setHistoryReady(true);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      const [salesSnapshot, productsSnapshot] = await Promise.all([
+      const historyQuery = query(
+        collectionGroup(db, 'stockHistory'),
+        orderBy('timestamp', 'desc'),
+        limit(120)
+      );
+
+      const [salesSnapshot, productsSnapshot, historySnapshot] = await Promise.all([
         getDocs(buildSalesQuery(rangeInfo)),
-        getDocs(collection(db, 'products'))
+        getDocs(collection(db, 'products')),
+        getDocs(historyQuery)
       ]);
 
       const nextSales = salesSnapshot.docs.map((doc) => normaliseSaleRecord({ id: doc.id, ...doc.data() }));
       const nextProducts = productsSnapshot.docs
         .map((doc) => normaliseProductRecord({ id: doc.id, ...doc.data() }))
         .filter((product) => product.raw?.status !== 'archived');
+      const nextHistory = historySnapshot.docs.map((doc) => normaliseStockHistoryEntry(doc));
 
       setSales(nextSales);
       setProducts(nextProducts);
+      setStockHistory(nextHistory);
       toast.success('Reports refreshed successfully');
     } catch (error) {
       console.error('Error refreshing reports:', error);
@@ -201,6 +242,38 @@ const Reports = () => {
     if (trend > 0) return <TrendingUp className="w-4 h-4" />;
     if (trend < 0) return <TrendingDown className="w-4 h-4" />;
     return <div className="w-4 h-4" />;
+  };
+
+  const productLookup = useMemo(() => {
+    const map = new Map();
+    products.forEach((product) => {
+      if (product?.id) {
+        map.set(product.id, product);
+      }
+    });
+    return map;
+  }, [products]);
+
+  const decoratedHistory = useMemo(() => {
+    return stockHistory.map((entry) => {
+      const relatedProduct = entry.productId ? productLookup.get(entry.productId) : null;
+      const productName = relatedProduct?.name || entry.raw?.productName || 'Unknown product';
+      const typeKey = relatedProduct?.type || entry.raw?.productType || null;
+      const typeLabel = relatedProduct?.typeLabel || getProductTypeLabel(typeKey) || 'Uncategorised';
+      const unit = relatedProduct?.unit || entry.raw?.unit || '';
+      return {
+        ...entry,
+        productName,
+        typeLabel,
+        unit
+      };
+    });
+  }, [stockHistory, productLookup]);
+
+  const formatDelta = (delta) => {
+    const value = Number(delta) || 0;
+    const prefix = value > 0 ? '+' : '';
+    return `${prefix}${value}`;
   };
 
   const perUnitPrice = (sale) => {
@@ -402,6 +475,69 @@ const Reports = () => {
         </div>
       </div>
 
+      <div className="bg-gradient-to-br from-emerald-600 to-teal-700 rounded-xl shadow-lg p-6 mb-8">
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h3 className="text-xl font-semibold text-white">Stock Movement History</h3>
+            <p className="text-emerald-100 text-sm">Track the latest inventory updates across your products</p>
+          </div>
+          <div className="p-3 bg-white/20 rounded-full">
+            <History className="w-5 h-5 text-white" />
+          </div>
+        </div>
+
+        {decoratedHistory.length > 0 ? (
+          <div className="relative">
+            <div className="absolute left-5 top-0 bottom-0 w-px bg-white/20" />
+            <div className="space-y-6 max-h-96 overflow-y-auto pr-2">
+              {decoratedHistory.map((entry) => {
+                const deltaPositive = (entry.delta || 0) > 0;
+                return (
+                  <div key={`${entry.id}-${entry.timestamp?.getTime?.() || Math.random()}`} className="relative pl-14">
+                    <div
+                      className={`absolute left-4 top-2 w-3 h-3 rounded-full border-2 border-white/60 ${
+                        deltaPositive ? 'bg-lime-300' : 'bg-rose-300'
+                      }`}
+                    />
+                    <div className="bg-white/10 backdrop-blur-sm border border-white/10 rounded-xl p-4 transition-colors hover:bg-white/15">
+                      <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                        <div>
+                          <p className="text-lg font-semibold text-white">{entry.productName}</p>
+                          <p className="text-xs text-emerald-100 uppercase tracking-wide">{entry.typeLabel}</p>
+                          <p className="text-sm text-emerald-50/90 mt-2">{entry.reason}</p>
+                        </div>
+                        <div className={`text-right text-sm font-semibold ${deltaPositive ? 'text-lime-200' : 'text-rose-200'}`}>
+                          <p>{formatDelta(entry.delta)} units</p>
+                          <p className="text-xs text-emerald-100 mt-1">
+                            {entry.previousQty} → {entry.newQty} {entry.unit ? entry.unit : 'units'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-emerald-100">
+                        <span>{format(entry.timestamp, 'MMM dd, yyyy • HH:mm')}</span>
+                        <span className="hidden sm:inline-block">•</span>
+                        <span>{formatDistanceToNow(entry.timestamp, { addSuffix: true })}</span>
+                        {entry.userEmail && (
+                          <>
+                            <span className="hidden sm:inline-block">•</span>
+                            <span>{entry.userEmail}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center justify-center h-48 text-emerald-100">
+            <History className="w-10 h-10 mb-2 opacity-70" />
+            <p className="text-sm">No stock history recorded yet. Inventory updates will appear here.</p>
+          </div>
+        )}
+      </div>
+
       <div className="bg-gradient-to-br from-slate-700 to-slate-800 rounded-xl shadow-lg p-6">
         <h3 className="text-xl font-semibold text-white mb-6">Export Reports</h3>
 
@@ -460,26 +596,26 @@ const Reports = () => {
         <div className="bg-gradient-to-br from-gray-800 to-slate-900 rounded-xl shadow-lg p-6">
           <h4 className="text-xl font-semibold text-white mb-6">System Status</h4>
           <div className="space-y-6">
-            <div className="flex items-center justify-between bg-white bg-opacity-10 rounded-lg p-4">
-              <span className="text-gray-300">Data Status</span>
+            <div className="flex items-center justify-between rounded-lg p-4 bg-emerald-500/10 border border-emerald-400/30">
+              <span className="text-emerald-100 font-medium">Data Status</span>
               <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                <span className="text-sm font-medium text-green-400">Live</span>
+                <div className="w-2 h-2 bg-emerald-300 rounded-full animate-pulse" />
+                <span className="text-sm font-semibold text-emerald-200">Live</span>
               </div>
             </div>
-            <div className="flex items-center justify-between bg-white bg-opacity-10 rounded-lg p-4">
-              <span className="text-gray-300">Last Updated</span>
-              <span className="text-sm text-gray-400">{format(analytics.generatedAt, 'MMM dd, yyyy HH:mm')}</span>
+            <div className="flex items-center justify-between rounded-lg p-4 bg-sky-500/10 border border-sky-400/30">
+              <span className="text-sky-100 font-medium">Last Updated</span>
+              <span className="text-sm font-semibold text-sky-200">{format(analytics.generatedAt, 'MMM dd, yyyy HH:mm')}</span>
             </div>
-            <div className="flex items-center justify-between bg-white bg-opacity-10 rounded-lg p-4">
-              <span className="text-gray-300">Low Stock Items</span>
-              <span className="text-sm text-gray-400">{analytics.inventoryMetrics.lowStockCount}</span>
+            <div className="flex items-center justify-between rounded-lg p-4 bg-rose-500/10 border border-rose-400/30">
+              <span className="text-rose-100 font-medium">Low Stock Items</span>
+              <span className="text-sm font-semibold text-rose-200">{analytics.inventoryMetrics.lowStockCount}</span>
             </div>
-            <div className="flex items-center justify-between bg-white bg-opacity-10 rounded-lg p-4">
-              <span className="text-gray-300">Database</span>
+            <div className="flex items-center justify-between rounded-lg p-4 bg-emerald-500/10 border border-emerald-400/30">
+              <span className="text-emerald-100 font-medium">Database</span>
               <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse" />
-                <span className="text-sm font-medium text-green-400">Connected</span>
+                <div className="w-2 h-2 bg-emerald-300 rounded-full animate-pulse" />
+                <span className="text-sm font-semibold text-emerald-200">Connected</span>
               </div>
             </div>
           </div>

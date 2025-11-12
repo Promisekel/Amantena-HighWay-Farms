@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { X } from 'lucide-react';
+import React, { Fragment, useEffect, useMemo, useState } from 'react';
+import { Combobox, Transition } from '@headlessui/react';
+import { X, ChevronDown } from 'lucide-react';
 import { updateProduct, auth } from '../../services/firebase';
 import toast from 'react-hot-toast';
 import {
@@ -10,13 +11,15 @@ import {
   getProductTypePlaceholder
 } from './productTypes';
 
+const normaliseValue = (value = '') => value.trim().toLowerCase();
+
 const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     price: 0,
-  stockQuantity: 0, // Displayed current stock level
+    stockQuantity: 0, // Displayed current stock level
     minStock: 0,
     maxStock: 0,
     unit: '',
@@ -24,6 +27,10 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     imageUrl: '',
     newStock: ''
   });
+  const [typeSelection, setTypeSelection] = useState(null);
+  const [nameSelection, setNameSelection] = useState(null);
+
+  const productTypeOptions = useMemo(() => productTypes || [], []);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -45,35 +52,189 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
 
   useEffect(() => {
     if (product) {
+      const matchedTypeOption = productTypeOptions.find((option) => option.value === product.type) || null;
+
       setFormData({
         name: product.name,
         description: product.description || '',
         price: product.price,
-  stockQuantity: Number(product.stockQuantity ?? product.currentStock ?? 0) || 0,
+        stockQuantity: Number(product.stockQuantity ?? product.currentStock ?? 0) || 0,
         minStock: product.minStock,
         maxStock: product.maxStock,
         unit: product.unit,
-        type: product.type,
+        type: matchedTypeOption?.label || product.type || '',
         imageUrl: product.imageUrl || getProductTypePlaceholder(product.type),
         newStock: ''
       });
-    }
-  }, [product]);
 
-  const currentVariants = productVariantsByType[formData.type] || [];
-  const ensuredVariants = (() => {
+      setTypeSelection(matchedTypeOption);
+      setNameSelection({
+        value: product.name,
+        label: product.name,
+        parentType: matchedTypeOption?.value || product.type,
+        parentLabel: matchedTypeOption?.label || getProductTypeLabel(product.type)
+      });
+    }
+  }, [product, productTypeOptions]);
+
+  const matchedType = useMemo(() => {
+    if (typeSelection) {
+      return typeSelection;
+    }
+    if (!formData.type) {
+      return null;
+    }
+
+    const normalisedInput = normaliseValue(formData.type);
+    return (
+      productTypeOptions.find((option) => {
+        const normalisedValue = normaliseValue(option.value);
+        const normalisedLabel = normaliseValue(option.label);
+        return normalisedValue === normalisedInput || normalisedLabel === normalisedInput;
+      }) || null
+    );
+  }, [formData.type, typeSelection, productTypeOptions]);
+
+  const variantOptions = useMemo(() => {
+    if (!matchedType) {
+      return [];
+    }
+    const variants = productVariantsByType[matchedType.value] || [];
+    const mapped = variants.map((variant) => ({
+      ...variant,
+      parentType: matchedType.value,
+      parentLabel: matchedType.label
+    }));
+
+    if (formData.name && !mapped.some((variant) => normaliseValue(variant.value) === normaliseValue(formData.name))) {
+      mapped.unshift({
+        value: formData.name,
+        label: formData.name,
+        parentType: matchedType.value,
+        parentLabel: matchedType.label
+      });
+    }
+
+    return mapped;
+  }, [matchedType, formData.name]);
+
+  const allVariantSuggestions = useMemo(() => {
+    const seen = new Map();
+    productTypeOptions.forEach((catalogItem) => {
+      const variants = productVariantsByType[catalogItem.value] || [];
+      variants.forEach((variant) => {
+        const key = `${catalogItem.value}-${variant.value}`;
+        if (!seen.has(key)) {
+          seen.set(key, {
+            ...variant,
+            parentType: catalogItem.value,
+            parentLabel: catalogItem.label
+          });
+        }
+      });
+    });
+    return Array.from(seen.values());
+  }, [productTypeOptions]);
+
+  const productNameSuggestionSource = useMemo(() => {
+    return variantOptions.length > 0 ? variantOptions : allVariantSuggestions;
+  }, [variantOptions, allVariantSuggestions]);
+
+  const typeSuggestions = useMemo(() => {
+    if (!formData.type) {
+      return productTypeOptions.slice(0, 8);
+    }
+
+    const normalisedInput = normaliseValue(formData.type);
+    return productTypeOptions
+      .filter((option) => {
+        const valueMatch = normaliseValue(option.value).includes(normalisedInput);
+        const labelMatch = normaliseValue(option.label).includes(normalisedInput);
+        return valueMatch || labelMatch;
+      })
+      .slice(0, 8);
+  }, [formData.type, productTypeOptions]);
+
+  const productNameSuggestions = useMemo(() => {
+    const source = formData.type ? productNameSuggestionSource : allVariantSuggestions;
+
     if (!formData.name) {
-      return currentVariants;
+      return source.slice(0, 8);
     }
-    const exists = currentVariants.some((variant) => variant.value === formData.name);
-    if (exists) {
-      return currentVariants;
+
+    const normalisedInput = normaliseValue(formData.name);
+    return source
+      .filter((variant) => {
+        const valueMatch = normaliseValue(variant.value).includes(normalisedInput);
+        const labelMatch = normaliseValue(variant.label || '').includes(normalisedInput);
+        return valueMatch || labelMatch;
+      })
+      .slice(0, 8);
+  }, [formData.type, formData.name, productNameSuggestionSource, allVariantSuggestions]);
+
+  const selectedTypeLabel = matchedType ? matchedType.label : (formData.type || '');
+  const previewPlaceholderSrc = getProductTypePlaceholder(matchedType?.value);
+  const previewImageSrc = formData.imageUrl || previewPlaceholderSrc || getProductTypePlaceholder(formData.type);
+  const previewLabel = selectedTypeLabel ? selectedTypeLabel.toLowerCase() : 'product';
+  const hasCustomImage = useMemo(() => formData.imageUrl && /^https?:\/\//i.test(formData.imageUrl), [formData.imageUrl]);
+  const productNamePlaceholder = !formData.type
+    ? 'Enter product type first'
+    : matchedType
+      ? `Search or add ${selectedTypeLabel} products`
+      : 'Enter product name';
+  const resolvedProductNamePlaceholder = formData.type
+    ? productNamePlaceholder
+    : 'Search or add product name';
+  const typeInputPlaceholder = 'Search or add product type';
+
+  const handleTypeInputChange = (value) => {
+    setTypeSelection(null);
+    setNameSelection(null);
+    setFormData((prev) => ({
+      ...prev,
+      type: value,
+      name: '',
+      unit: prev.unit
+    }));
+  };
+
+  const handleTypeSelect = (option) => {
+    setTypeSelection(option);
+    setNameSelection(null);
+    setFormData((prev) => ({
+      ...prev,
+      type: option?.label || '',
+      name: '',
+      unit: '',
+      imageUrl: option ? getProductTypePlaceholder(option.value) : prev.imageUrl
+    }));
+  };
+
+  const handleProductNameInputChange = (value) => {
+    setNameSelection(null);
+    setFormData((prev) => ({
+      ...prev,
+      name: value
+    }));
+  };
+
+  const handleProductSuggestionSelect = (variant) => {
+    const effectiveTypeValue = variant.parentType || matchedType?.value || null;
+    const variantMeta = effectiveTypeValue ? getProductVariantMeta(effectiveTypeValue, variant.value) : null;
+
+    if (variant.parentType && variant.parentLabel) {
+      setTypeSelection({ value: variant.parentType, label: variant.parentLabel });
     }
-    return [
-      { value: formData.name, label: formData.name },
-      ...currentVariants
-    ];
-  })();
+
+    setNameSelection(variant);
+    setFormData((prev) => ({
+      ...prev,
+      type: variant.parentLabel || prev.type,
+      name: variant.value,
+      unit: variantMeta?.size || variant.size || prev.unit,
+      imageUrl: effectiveTypeValue ? getProductTypePlaceholder(effectiveTypeValue) : prev.imageUrl
+    }));
+  };
 
   const baseStock = Number(product?.stockQuantity ?? product?.currentStock ?? 0) || 0;
   const additionalStock = useMemo(() => {
@@ -105,7 +266,6 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
     });
 
     try {
-      const hasCustomImage = formData.imageUrl && /^https?:\/\//i.test(formData.imageUrl);
       const imageUrl = hasCustomImage ? formData.imageUrl : null;
       const previousStock = baseStock;
       if (additionalStock !== null) {
@@ -128,15 +288,33 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
         ? (updatedStock > 0 ? 100 : 0)
         : ((updatedStock - previousStock) / (previousStock || 1)) * 100;
 
-      // Update product in Firestore via service so stock history is recorded
       const { newStock, ...formValues } = formData;
-      const categoryValue = formValues.type || product?.category || product?.type || 'uncategorized';
+
+      const canonicalType = matchedType ? matchedType.value : (formData.type || '').trim();
+      const typeLabel = matchedType ? matchedType.label : (formData.type || '').trim();
+      const productName = (formData.name || '').trim();
+
+      if (!canonicalType) {
+        toast.error('Please enter a valid product type');
+        return;
+      }
+
+      if (!productName) {
+        toast.error('Please enter a valid product name');
+        return;
+      }
+
+      const { type: _typeInput, ...restValues } = formValues;
+      const categoryValue = canonicalType || product?.category || product?.type || 'uncategorized';
 
       const updatePayload = {
-        ...formValues,
+        ...restValues,
+        name: productName,
+        type: canonicalType,
+        typeLabel,
         category: categoryValue,
-  stockQuantity: updatedStock,
-  currentStock: updatedStock,
+        stockQuantity: updatedStock,
+        currentStock: updatedStock,
         imageUrl,
         lastUpdated: new Date(),
         stockTrend: stockTrendDelta,
@@ -148,6 +326,8 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
             : `Reduced by ${Math.abs(additionalStock)}`
           : 'Manual update via edit form'
       };
+
+      // Update product in Firestore via service so stock history is recorded
 
       console.log('[EditProductModal] Submitting update payload', updatePayload);
 
@@ -188,12 +368,15 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Image Upload */}
             <div className="md:col-span-2">
-              <div className="w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center overflow-hidden bg-white">
-                <img 
-                  src={formData.imageUrl || getProductTypePlaceholder(formData.type)} 
-                  alt="Product"
+              <div className="relative w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg flex flex-col items-center justify-center overflow-hidden bg-white">
+                <img
+                  src={previewImageSrc}
+                  alt={selectedTypeLabel ? `${selectedTypeLabel} preview` : 'Product preview'}
                   className="w-full h-full object-cover"
                 />
+                <div className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[10px] font-medium tracking-wide uppercase text-center py-1">
+                  {hasCustomImage ? 'Custom product image' : `Default ${previewLabel} image`}
+                </div>
               </div>
               <p className="mt-2 text-xs text-gray-500">
                 Images auto-select from the product type library. Uploads are disabled.
@@ -205,31 +388,61 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Type
               </label>
-              <select
-                name="type"
-                value={formData.type}
-                onChange={(event) => {
-                  const nextType = event.target.value;
-                  setFormData((prev) => ({
-                    ...prev,
-                    type: nextType,
-                    name: '',
-                    unit: '',
-                    imageUrl: getProductTypePlaceholder(nextType)
-                  }));
+              <Combobox
+                value={typeSelection}
+                nullable
+                onChange={(option) => {
+                  if (option) {
+                    handleTypeSelect(option);
+                  } else {
+                    setTypeSelection(null);
+                  }
                 }}
-                required
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100"
               >
-                {productTypes.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-                {!productTypes.some((option) => option.value === formData.type) && formData.type && (
-                  <option value={formData.type}>{getProductTypeLabel(formData.type)}</option>
-                )}
-              </select>
+                <div className="relative">
+                  <Combobox.Input
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    displayValue={(option) => option?.label || option?.value || formData.type}
+                    onChange={(event) => handleTypeInputChange(event.target.value)}
+                    placeholder={typeInputPlaceholder}
+                    autoComplete="off"
+                    name="type"
+                    required
+                  />
+                  <Combobox.Button className="absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                    <ChevronDown size={16} aria-hidden="true" />
+                  </Combobox.Button>
+                  <Transition
+                    as={Fragment}
+                    leave="transition ease-in duration-100"
+                    leaveFrom="opacity-100"
+                    leaveTo="opacity-0"
+                  >
+                    {typeSuggestions.length === 0 && formData.type ? (
+                      <Combobox.Options className="absolute left-0 top-full z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-2 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        <div className="px-3 py-2 text-gray-500">No matching types. Press enter to keep typing.</div>
+                      </Combobox.Options>
+                    ) : typeSuggestions.length > 0 ? (
+                      <Combobox.Options className="absolute left-0 top-full z-20 mt-1 w-full max-h-56 overflow-y-auto rounded-lg border border-gray-200 bg-white py-2 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        {typeSuggestions.map((option) => (
+                          <Combobox.Option
+                            key={option.value}
+                            value={option}
+                            className={({ active }) =>
+                              `cursor-pointer select-none px-3 py-2 ${
+                                active ? 'bg-emerald-50 text-emerald-900' : 'text-gray-900'
+                              }`
+                            }
+                          >
+                            <span className="block text-sm font-medium">{option.label}</span>
+                            <span className="block text-xs text-gray-500">{option.value}</span>
+                          </Combobox.Option>
+                        ))}
+                      </Combobox.Options>
+                    ) : null}
+                  </Transition>
+                </div>
+              </Combobox>
             </div>
 
             {/* Product Name */}
@@ -237,30 +450,68 @@ const EditProductModal = ({ isOpen, onClose, product, onProductUpdated }) => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Product Name
               </label>
-              <select
-                name="name"
-                value={formData.name}
-                onChange={(event) => {
-                  const selectedValue = event.target.value;
-                  const variantMeta = getProductVariantMeta(formData.type, selectedValue);
-                  setFormData((prev) => ({
-                    ...prev,
-                    name: selectedValue,
-                    unit: variantMeta?.size || prev.unit
-                  }));
+              <Combobox
+                value={nameSelection}
+                nullable
+                onChange={(variant) => {
+                  if (variant) {
+                    handleProductSuggestionSelect(variant);
+                  } else {
+                    setNameSelection(null);
+                  }
                 }}
-                required
-                disabled={!formData.type}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
               >
-                <option value="">Select {getProductTypeLabel(formData.type) || 'product'}</option>
-                {ensuredVariants.map((variant) => (
-                  <option key={variant.value} value={variant.value}>
-                    {variant.label}
-                    {variant.size ? ` (${variant.size})` : ''}
-                  </option>
-                ))}
-              </select>
+                <div className="relative">
+                  <Combobox.Input
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    displayValue={(variant) => variant?.label || variant?.value || formData.name}
+                    onChange={(event) => handleProductNameInputChange(event.target.value)}
+                    placeholder={resolvedProductNamePlaceholder}
+                    autoComplete="off"
+                    name="name"
+                    required
+                  />
+                  <Combobox.Button className="absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                    <ChevronDown size={16} aria-hidden="true" />
+                  </Combobox.Button>
+                  <Transition
+                    as={Fragment}
+                    leave="transition ease-in duration-100"
+                    leaveFrom="opacity-100"
+                    leaveTo="opacity-0"
+                  >
+                    {formData.name && productNameSuggestions.length === 0 ? (
+                      <Combobox.Options className="absolute left-0 top-full z-20 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white py-2 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        <div className="px-3 py-2 text-gray-500">No matching products. Press enter to keep typing.</div>
+                      </Combobox.Options>
+                    ) : productNameSuggestions.length > 0 ? (
+                      <Combobox.Options className="absolute left-0 top-full z-20 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white py-2 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        {productNameSuggestions.map((variant) => (
+                          <Combobox.Option
+                            key={`${variant.parentType || 'global'}-${variant.value}`}
+                            value={variant}
+                            className={({ active }) =>
+                              `cursor-pointer select-none px-3 py-2 ${
+                                active ? 'bg-emerald-50 text-emerald-900' : 'text-gray-900'
+                              }`
+                            }
+                          >
+                            <span className="block text-sm font-medium">
+                              {variant.label || variant.value}
+                            </span>
+                            {variant.size && (
+                              <span className="block text-xs text-gray-500">{variant.size}</span>
+                            )}
+                            {variant.parentLabel && (
+                              <span className="block text-xs text-gray-400">{variant.parentLabel}</span>
+                            )}
+                          </Combobox.Option>
+                        ))}
+                      </Combobox.Options>
+                    ) : null}
+                  </Transition>
+                </div>
+              </Combobox>
             </div>
 
             {/* Description */}

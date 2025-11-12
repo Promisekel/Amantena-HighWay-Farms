@@ -134,6 +134,45 @@ export const normaliseProductRecord = (raw) => {
   };
 };
 
+export const normaliseStockHistoryEntry = (doc) => {
+  if (!doc) {
+    return {
+      id: null,
+      productId: null,
+      previousQty: 0,
+      newQty: 0,
+      delta: 0,
+      reason: 'Update',
+      userId: null,
+      userEmail: null,
+      timestamp: new Date(),
+      raw: {}
+    };
+  }
+
+  const rawData = typeof doc.data === 'function' ? doc.data() || {} : doc;
+  const docId = doc.id || rawData.id || null;
+  const parentRef = doc.ref?.parent?.parent || null;
+  const productId = rawData.productId || parentRef?.id || null;
+
+  const previousQty = Number(rawData.previousQty ?? rawData.oldQty ?? rawData.before ?? 0) || 0;
+  const newQty = Number(rawData.newQty ?? rawData.currentQty ?? rawData.after ?? previousQty) || previousQty;
+  const delta = Number(rawData.delta ?? rawData.change ?? (newQty - previousQty)) || 0;
+
+  return {
+    id: docId,
+    productId,
+    previousQty,
+    newQty,
+    delta,
+    reason: rawData.reason || 'Stock update',
+    userId: rawData.userId || rawData.updatedBy || null,
+    userEmail: rawData.userEmail || rawData.updatedByEmail || null,
+    timestamp: normaliseDate(rawData.timestamp),
+    raw: rawData
+  };
+};
+
 const isWithinRange = (date, start, end) => {
   if (!start || !end) {
     return true;
