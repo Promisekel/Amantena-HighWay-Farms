@@ -1,5 +1,6 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { X, Loader } from 'lucide-react';
+import React, { useState, useMemo, useRef, useEffect, Fragment } from 'react';
+import { Combobox, Transition } from '@headlessui/react';
+import { X, Loader, ChevronDown } from 'lucide-react';
 import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import toast from 'react-hot-toast';
@@ -27,18 +28,14 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
   });
 
   const [typeInputFocused, setTypeInputFocused] = useState(false);
-  const [nameInputFocused, setNameInputFocused] = useState(false);
+  const [nameSelection, setNameSelection] = useState(null);
 
   const typeBlurTimeout = useRef(null);
-  const nameBlurTimeout = useRef(null);
 
   useEffect(() => {
     return () => {
       if (typeBlurTimeout.current) {
         clearTimeout(typeBlurTimeout.current);
-      }
-      if (nameBlurTimeout.current) {
-        clearTimeout(nameBlurTimeout.current);
       }
     };
   }, []);
@@ -108,23 +105,21 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
   }, [formData.type, productTypeOptions]);
 
   const productNameSuggestions = useMemo(() => {
-    if (!formData.type) {
-      return [];
-    }
+    const source = formData.type ? productNameSuggestionSource : allVariantSuggestions;
 
     if (!formData.name) {
-      return productNameSuggestionSource.slice(0, 8);
+      return source.slice(0, 8);
     }
 
     const normalisedInput = normaliseValue(formData.name);
-    return productNameSuggestionSource
+    return source
       .filter((variant) => {
         const valueMatch = normaliseValue(variant.value).includes(normalisedInput);
         const labelMatch = normaliseValue(variant.label || '').includes(normalisedInput);
         return valueMatch || labelMatch;
       })
       .slice(0, 8);
-  }, [formData.type, formData.name, productNameSuggestionSource]);
+  }, [formData.type, formData.name, productNameSuggestionSource, allVariantSuggestions]);
 
   const selectedTypeLabel = matchedType ? matchedType.label : (formData.type || '');
   const previewPlaceholderSrc = getProductTypePlaceholder(matchedType?.value);
@@ -134,6 +129,9 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
     : matchedType
       ? `Search or add ${selectedTypeLabel} products`
       : 'Enter product name';
+  const resolvedProductNamePlaceholder = formData.type
+    ? productNamePlaceholder
+    : 'Search or add product name';
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -225,6 +223,7 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
         minStock: '',
         maxStock: ''
       });
+      setNameSelection(null);
 
       onProductAdded();
       onClose();
@@ -254,6 +253,7 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
       name: '',
       unit: ''
     }));
+    setNameSelection(null);
   };
 
   const handleTypeSuggestionSelect = (option) => {
@@ -264,10 +264,11 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
       unit: ''
     }));
     setTypeInputFocused(false);
+    setNameSelection(null);
   };
 
-  const handleProductNameInputChange = (e) => {
-    const { value } = e.target;
+  const handleProductNameInputChange = (value) => {
+    setNameSelection(null);
     setFormData(prev => ({
       ...prev,
       name: value
@@ -285,7 +286,7 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
       name: variant.value,
       unit: variantMeta?.size || variant.size || prev.unit
     }));
-    setNameInputFocused(false);
+    setNameSelection(variant);
   };
 
   const handleTypeInputFocus = () => {
@@ -298,19 +299,6 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
   const handleTypeInputBlur = () => {
     typeBlurTimeout.current = setTimeout(() => {
       setTypeInputFocused(false);
-    }, 150);
-  };
-
-  const handleNameInputFocus = () => {
-    if (nameBlurTimeout.current) {
-      clearTimeout(nameBlurTimeout.current);
-    }
-    setNameInputFocused(true);
-  };
-
-  const handleNameInputBlur = () => {
-    nameBlurTimeout.current = setTimeout(() => {
-      setNameInputFocused(false);
     }, 150);
   };
 
@@ -405,42 +393,68 @@ const AddProductModal = ({ isOpen, onClose, onProductAdded }) => {
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Product Name <span className="text-red-500">*</span>
               </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  name="name"
-                  value={formData.name}
-                  onChange={handleProductNameInputChange}
-                  onFocus={handleNameInputFocus}
-                  onBlur={handleNameInputBlur}
-                  required
-                  disabled={!formData.type}
-                  autoComplete="off"
-                  placeholder={productNamePlaceholder}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent disabled:bg-gray-100"
-                />
-                {nameInputFocused && productNameSuggestions.length > 0 && (
-                  <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
-                    <ul className="py-1">
-                      {productNameSuggestions.map((variant) => (
-                        <li key={variant.value}>
-                          <button
-                            type="button"
-                            onMouseDown={(event) => event.preventDefault()}
-                            onClick={() => handleProductSuggestionSelect(variant)}
-                            className="w-full text-left px-3 py-2 hover:bg-emerald-50 focus:bg-emerald-50"
+              <Combobox
+                value={nameSelection}
+                nullable
+                onChange={(variant) => {
+                  if (variant) {
+                    handleProductSuggestionSelect(variant);
+                  } else {
+                    setNameSelection(null);
+                  }
+                }}
+              >
+                <div className="relative">
+                  <Combobox.Input
+                    className="w-full px-3 py-2 pr-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                    displayValue={(variant) => variant?.label || variant?.value || formData.name}
+                    onChange={(event) => handleProductNameInputChange(event.target.value)}
+                    placeholder={resolvedProductNamePlaceholder}
+                    autoComplete="off"
+                    name="name"
+                    required
+                  />
+                  <Combobox.Button className="absolute inset-y-0 right-0 flex items-center px-2 text-gray-400">
+                    <ChevronDown size={16} aria-hidden="true" />
+                  </Combobox.Button>
+                  <Transition
+                    as={Fragment}
+                    leave="transition ease-in duration-100"
+                    leaveFrom="opacity-100"
+                    leaveTo="opacity-0"
+                  >
+                    {formData.name && productNameSuggestions.length === 0 ? (
+                      <Combobox.Options className="absolute left-0 top-full z-20 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white py-2 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        <div className="px-3 py-2 text-gray-500">No matching products. Press enter to keep typing.</div>
+                      </Combobox.Options>
+                    ) : productNameSuggestions.length > 0 ? (
+                      <Combobox.Options className="absolute left-0 top-full z-20 mt-1 w-full max-h-60 overflow-y-auto rounded-lg border border-gray-200 bg-white py-2 text-sm shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        {productNameSuggestions.map((variant) => (
+                          <Combobox.Option
+                            key={`${variant.parentType || 'global'}-${variant.value}`}
+                            value={variant}
+                            className={({ active }) =>
+                              `cursor-pointer select-none px-3 py-2 ${
+                                active ? 'bg-emerald-50 text-emerald-900' : 'text-gray-900'
+                              }`
+                            }
                           >
-                            <span className="block text-sm font-medium text-gray-900">{variant.label || variant.value}</span>
+                            <span className="block text-sm font-medium">
+                              {variant.label || variant.value}
+                            </span>
                             {variant.size && (
                               <span className="block text-xs text-gray-500">{variant.size}</span>
                             )}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
+                            {variant.parentLabel && (
+                              <span className="block text-xs text-gray-400">{variant.parentLabel}</span>
+                            )}
+                          </Combobox.Option>
+                        ))}
+                      </Combobox.Options>
+                    ) : null}
+                  </Transition>
+                </div>
+              </Combobox>
             </div>
 
             <div className="md:col-span-2">
