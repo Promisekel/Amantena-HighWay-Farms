@@ -106,7 +106,13 @@ export const productCatalog = [
     label: 'Koudjis Products',
     placeholder: koudjisProductsImage,
     variants: [
-      { value: 'Koudjis Products', label: 'Koudjis Products' }
+    { value: 'Broiler Starter KBSC 35%', label: 'Starter KBSC 35%' },
+      { value: 'Broiler KBC', label: 'KBC' },
+      { value: 'Magic Feed (Galdus)', label: 'Magic Feed (Galdus)', size: '25 kg' },
+      { value: 'Romelko (Piglet Feed)', label: 'Romelko (Piglet Feed)' },
+      { value: 'All Purpose Pig Feed', label: 'All Purpose Pig Feed' },
+      { value: 'Pig Grow-Finisher Concentrate', label: 'Pig Grow-Finisher Concentrate', size: '30%' },
+      { value: 'Pig Sow Concentrate', label: 'Pig Sow Concentrate' }
     ]
   },
   {
