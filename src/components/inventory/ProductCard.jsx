@@ -57,7 +57,7 @@ const ProductCard = ({ product, onView, onEdit, onDelete }) => {
   const fallbackImage = getProductTypePlaceholder(product.type);
   const imageSrc = product.imageUrl || fallbackImage;
   const price = Number(product.price) || 0;
-  const inventoryValue = Number(product.inventoryValue) || price * Math.max(currentStock, 0);
+  const inventoryValue = price * Math.max(currentStock, 0);
 
   const handleImageError = (event) => {
     if (!event?.target) return;

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Grid, List as ListIcon, Search, Package, AlertTriangle, Plus, DollarSign } from 'lucide-react';
-import { collection, query, orderBy, onSnapshot, deleteDoc, doc } from 'firebase/firestore';
-import { db } from '../../services/firebase';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
+import { db, deleteProduct } from '../../services/firebase';
 import InventoryTabs from './InventoryTabs';
 import './inventory.css';
 import ProductCard from './ProductCard';
@@ -117,7 +117,7 @@ const InventoryPage = () => {
   const handleDeleteProduct = async (product) => {
     if (window.confirm(`Are you sure you want to delete ${product.name}? This action cannot be undone.`)) {
       try {
-        await deleteDoc(doc(db, 'products', product.id));
+        await deleteProduct(product.id);
         toast.success(`${product.name} deleted successfully`);
       } catch (err) {
         console.error('Error deleting product:', err);
@@ -156,7 +156,7 @@ const InventoryPage = () => {
 
       const stockQuantity = Number(product.stockQuantity ?? product.currentStock ?? 0) || 0;
       const minStock = Number(product.minStock) || 0;
-      const inventoryValue = Number(product.inventoryValue) || (Number(product.price) || 0) * Math.max(stockQuantity, 0);
+  const inventoryValue = (Number(product.price) || 0) * Math.max(stockQuantity, 0);
       const unitPrice = Number(product.price) || 0;
 
       acc.totalProducts += 1;

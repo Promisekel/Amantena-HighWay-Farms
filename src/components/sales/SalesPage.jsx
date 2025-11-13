@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { PlusCircle, Eye } from 'lucide-react';
-import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, onSnapshot } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import SalesModal from './SalesModal';
 import ViewSaleDetailsModal from './ViewSaleDetailsModal';
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow, isSameDay } from 'date-fns';
 import { normaliseSaleRecord } from '../reports/reportUtils';
 import { getProductTypeLabel } from '../inventory/productTypes';
 
@@ -22,11 +22,11 @@ const SalesPage = () => {
   useEffect(() => {
     // Subscribe to sales data
     const salesRef = collection(db, 'sales');
-    const q = query(salesRef, orderBy('timestamp', 'desc'), limit(10));
+    const q = query(salesRef, orderBy('timestamp', 'desc'));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const sales = snapshot.docs.map((doc) => normaliseSaleRecord({ id: doc.id, ...doc.data() }));
-      setSalesData(sales);
+      setSalesData(sales.slice(0, 10));
       updateSummaryStats(sales);
     });
 
@@ -34,8 +34,11 @@ const SalesPage = () => {
   }, []);
 
   const updateSummaryStats = (sales) => {
-    const totalSales = sales.reduce((sum, sale) => sum + (sale.total || 0), 0);
-    const totalTransactions = sales.length;
+    const today = new Date();
+    const todaysSales = sales.filter((sale) => sale.timestamp && isSameDay(sale.timestamp, today));
+
+    const totalSales = todaysSales.reduce((sum, sale) => sum + (sale.total || 0), 0);
+    const totalTransactions = todaysSales.length;
     const averageSale = totalTransactions > 0 ? totalSales / totalTransactions : 0;
 
     setSummaryStats({

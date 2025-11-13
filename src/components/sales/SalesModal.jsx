@@ -6,8 +6,8 @@ import {
   serverTimestamp,
   doc,
   getDocs,
-  writeBatch,
-  increment
+  getDoc,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import toast from 'react-hot-toast';
@@ -243,24 +243,63 @@ const SalesModal = ({ isOpen, onClose }) => {
         productUsage.set(product.id, entry);
       });
 
-      productUsage.forEach(({ product, totalQuantity, sales }) => {
-        const productRef = doc(db, 'products', product.id);
+      for (const [productId, usage] of productUsage.entries()) {
+        const { product, totalQuantity, sales } = usage;
+        const productRef = doc(db, 'products', productId);
+        const latestSnapshot = await getDoc(productRef);
+
+        if (!latestSnapshot.exists()) {
+          throw new Error(`${product.name} no longer exists in inventory`);
+        }
+
+        const latestData = latestSnapshot.data() || {};
+        const previousStock = Number(latestData.stockQuantity ?? latestData.currentStock ?? 0) || 0;
+        const unitPrice = Number(latestData.price ?? product.price ?? 0) || 0;
+
+        if (totalQuantity > previousStock) {
+          throw new Error(`${product.name} has only ${previousStock} unit(s) available`);
+        }
+
+        const newStockLevel = Math.max(previousStock - totalQuantity, 0);
+        const inventoryValue = unitPrice * newStockLevel;
+        const stockTrend = previousStock === 0
+          ? 0
+          : ((newStockLevel - previousStock) / (previousStock || 1)) * 100;
 
         batch.update(productRef, {
-          stockQuantity: increment(-totalQuantity),
-          currentStock: increment(-totalQuantity),
-          lastUpdated: timestamp
+          stockQuantity: newStockLevel,
+          currentStock: newStockLevel,
+          inventoryValue,
+          stockTrend,
+          lastUpdated: timestamp,
+          updatedAt: timestamp
         });
 
-        let runningStock = product.stockQuantity;
+        const saleRefs = sales.map(() => doc(salesCollection));
+        const historyRef = doc(collection(db, `products/${productId}/stockHistory`));
+        batch.set(historyRef, {
+          previousQty: previousStock,
+          newQty: newStockLevel,
+          delta: newStockLevel - previousStock,
+          reason: salesperson ? `Sale recorded by ${salesperson}` : 'Sale recorded',
+          movementType: 'sale',
+          quantitySold: totalQuantity,
+          saleCount: sales.length,
+          relatedSaleIds: saleRefs.map((ref) => ref.id),
+          timestamp,
+          salesperson,
+          productName: product.name
+        });
 
-        sales.forEach((saleItem) => {
-          const saleRef = doc(salesCollection);
-          const newStockLevel = runningStock - saleItem.quantity;
-          const baseTotal = Number(saleItem.total) || 0;
+        let runningStock = previousStock;
+
+        sales.forEach((saleItem, saleIndex) => {
+          const saleRef = saleRefs[saleIndex];
+          const baseTotal = Number(saleItem.total) || (Number(saleItem.price) || 0) * saleItem.quantity;
+          const nextStockLevel = runningStock - saleItem.quantity;
 
           batch.set(saleRef, {
-            productId: product.id,
+            productId,
             productName: product.name,
             productType: product.type || 'UNSPECIFIED',
             product: product.name,
@@ -272,14 +311,14 @@ const SalesModal = ({ isOpen, onClose }) => {
             salesperson,
             timestamp,
             previousStock: runningStock,
-            newStock: newStockLevel,
+            newStock: nextStockLevel,
             status: 'completed',
             createdAt: timestamp
           });
 
-          runningStock = newStockLevel;
+          runningStock = nextStockLevel;
         });
-      });
+      }
 
       await batch.commit();
       toast.success('Sales recorded successfully! Inventory updated.');

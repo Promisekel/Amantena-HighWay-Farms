@@ -14,14 +14,15 @@ import {
   doc, 
   addDoc, 
   updateDoc, 
-  deleteDoc, 
-  getDocs, 
+  getDocs,
   getDoc,
   setDoc,
   query,
   orderBy,
+  where,
   serverTimestamp,
-  runTransaction
+  runTransaction,
+  writeBatch
 } from 'firebase/firestore';
 import { 
   getStorage, 
@@ -364,7 +365,30 @@ export const updateProduct = async (productId, productData) => {
 
 export const deleteProduct = async (productId) => {
   try {
-    await deleteDoc(doc(db, 'products', productId));
+    const productRef = doc(db, 'products', productId);
+    const productSnapshot = await getDoc(productRef);
+
+    if (!productSnapshot.exists()) {
+      throw new Error('Product not found');
+    }
+
+    const batch = writeBatch(db);
+    batch.delete(productRef);
+
+    const historySnapshot = await getDocs(collection(db, `products/${productId}/stockHistory`));
+    historySnapshot.forEach((historyDoc) => {
+      batch.delete(historyDoc.ref);
+    });
+
+    const relatedSales = await getDocs(query(collection(db, 'sales'), where('productId', '==', productId)));
+    relatedSales.forEach((saleDoc) => {
+      batch.update(saleDoc.ref, {
+        productId: null,
+        productDeleted: true
+      });
+    });
+
+    await batch.commit();
   } catch (error) {
     console.error('Error deleting product:', error);
     throw error;
