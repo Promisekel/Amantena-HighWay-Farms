@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   TrendingUp,
   TrendingDown,
@@ -13,17 +13,7 @@ import {
   Download,
   History
 } from 'lucide-react';
-import {
-  collection,
-  collectionGroup,
-  query,
-  orderBy,
-  limit,
-  getDocs,
-  onSnapshot,
-  where,
-  Timestamp
-} from 'firebase/firestore';
+import { collection, query, orderBy, limit, getDocs, onSnapshot, where, Timestamp } from 'firebase/firestore';
 import { db } from '../../services/firebase';
 import { format, formatDistanceToNow } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -38,6 +28,55 @@ import {
 import { getProductTypeLabel } from '../inventory/productTypes';
 
 const MAX_SALES_RECORDS = 500;
+const MAX_HISTORY_RECORDS = 120;
+const HISTORY_PER_PRODUCT = 30;
+const HISTORY_FETCH_CHUNK = 8;
+
+const normaliseHistoryDocs = (docs) => docs.map((doc) => normaliseStockHistoryEntry(doc));
+
+const mergeHistoryEntries = (entries) =>
+  entries
+    .filter(Boolean)
+    .sort((a, b) => {
+      const aTime = a.timestamp instanceof Date ? a.timestamp.getTime() : 0;
+      const bTime = b.timestamp instanceof Date ? b.timestamp.getTime() : 0;
+      return bTime - aTime;
+    })
+    .slice(0, MAX_HISTORY_RECORDS);
+
+const fetchStockHistoryForProducts = async (productList) => {
+  if (!productList?.length) {
+    return [];
+  }
+
+  const mergedEntries = [];
+
+  for (let index = 0; index < productList.length; index += HISTORY_FETCH_CHUNK) {
+    const chunk = productList.slice(index, index + HISTORY_FETCH_CHUNK);
+    const chunkEntries = await Promise.all(
+      chunk.map(async (product) => {
+        try {
+          const historyQuery = query(
+            collection(db, 'products', product.id, 'stockHistory'),
+            orderBy('timestamp', 'desc'),
+            limit(HISTORY_PER_PRODUCT)
+          );
+          const snapshot = await getDocs(historyQuery);
+          return normaliseHistoryDocs(snapshot.docs);
+        } catch (error) {
+          console.error(`Failed to load stock history for product ${product.id}`, error);
+          return [];
+        }
+      })
+    );
+
+    chunkEntries.forEach((entries) => {
+      mergedEntries.push(...entries);
+    });
+  }
+
+  return mergeHistoryEntries(mergedEntries);
+};
 
 const buildSalesQuery = (rangeInfo) => {
   const constraints = [];
@@ -67,6 +106,7 @@ const Reports = () => {
   const [productsReady, setProductsReady] = useState(false);
   const [historyReady, setHistoryReady] = useState(false);
   const [loading, setLoading] = useState(true);
+  const historyInitRef = useRef(false);
 
   const rangeInfo = useMemo(() => resolveDateRange(dateRange), [dateRange]);
 
@@ -125,52 +165,62 @@ const Reports = () => {
   }, [salesReady, productsReady, historyReady]);
 
   useEffect(() => {
-    setHistoryReady(false);
+    if (!productsReady) {
+      return;
+    }
 
-    const historyQuery = query(
-      collectionGroup(db, 'stockHistory'),
-      orderBy('timestamp', 'desc'),
-      limit(120)
-    );
+    if (!products.length) {
+      setStockHistory([]);
+      setHistoryReady(true);
+      historyInitRef.current = true;
+      return;
+    }
 
-    const unsubscribe = onSnapshot(
-      historyQuery,
-      (snapshot) => {
-        const entries = snapshot.docs.map((doc) => normaliseStockHistoryEntry(doc));
+    let cancelled = false;
+
+    if (!historyInitRef.current) {
+      setHistoryReady(false);
+    }
+
+    const syncHistory = async () => {
+      try {
+        const entries = await fetchStockHistoryForProducts(products);
+        if (cancelled) {
+          return;
+        }
         setStockHistory(entries);
         setHistoryReady(true);
-      },
-      (error) => {
-        console.error('Stock history listener error:', error);
-        toast.error('Unable to load stock history');
-        setStockHistory([]);
-        setHistoryReady(true);
+        historyInitRef.current = true;
+      } catch (error) {
+        console.error('Stock history fetch error:', error);
+        if (!cancelled) {
+          toast.error('Unable to load stock history');
+          setStockHistory([]);
+          setHistoryReady(true);
+        }
       }
-    );
+    };
 
-    return () => unsubscribe();
-  }, []);
+    syncHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [products, productsReady]);
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try {
-      const historyQuery = query(
-        collectionGroup(db, 'stockHistory'),
-        orderBy('timestamp', 'desc'),
-        limit(120)
-      );
-
-      const [salesSnapshot, productsSnapshot, historySnapshot] = await Promise.all([
+      const [salesSnapshot, productsSnapshot] = await Promise.all([
         getDocs(buildSalesQuery(rangeInfo)),
-        getDocs(collection(db, 'products')),
-        getDocs(historyQuery)
+        getDocs(collection(db, 'products'))
       ]);
 
       const nextSales = salesSnapshot.docs.map((doc) => normaliseSaleRecord({ id: doc.id, ...doc.data() }));
       const nextProducts = productsSnapshot.docs
         .map((doc) => normaliseProductRecord({ id: doc.id, ...doc.data() }))
         .filter((product) => product.raw?.status !== 'archived');
-      const nextHistory = historySnapshot.docs.map((doc) => normaliseStockHistoryEntry(doc));
+      const nextHistory = await fetchStockHistoryForProducts(nextProducts);
 
       setSales(nextSales);
       setProducts(nextProducts);
@@ -502,18 +552,18 @@ const Reports = () => {
                     <div className="bg-white/10 backdrop-blur-sm border border-white/10 rounded-xl p-4 transition-colors hover:bg-white/15">
                       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
                         <div>
-                          <p className="text-lg font-semibold text-white">{entry.productName}</p>
-                          <p className="text-xs text-emerald-100 uppercase tracking-wide">{entry.typeLabel}</p>
-                          <p className="text-sm text-emerald-50/90 mt-2">{entry.reason}</p>
+                          <p className="text-xl font-semibold text-white">{entry.productName}</p>
+                          <p className="text-sm text-emerald-100 uppercase tracking-wide">{entry.typeLabel}</p>
+                          <p className="text-base text-emerald-50/90 mt-2">{entry.reason}</p>
                         </div>
-                        <div className={`text-right text-sm font-semibold ${deltaPositive ? 'text-lime-200' : 'text-rose-200'}`}>
+                        <div className={`text-right text-base font-semibold ${deltaPositive ? 'text-lime-200' : 'text-rose-200'}`}>
                           <p>{formatDelta(entry.delta)} units</p>
-                          <p className="text-xs text-emerald-100 mt-1">
+                          <p className="text-sm text-emerald-100 mt-1">
                             {entry.previousQty} → {entry.newQty} {entry.unit ? entry.unit : 'units'}
                           </p>
                         </div>
                       </div>
-                      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-emerald-100">
+                      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-emerald-100">
                         <span>{format(entry.timestamp, 'MMM dd, yyyy • HH:mm')}</span>
                         <span className="hidden sm:inline-block">•</span>
                         <span>{formatDistanceToNow(entry.timestamp, { addSuffix: true })}</span>
